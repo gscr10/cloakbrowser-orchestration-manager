@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Node
+node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Deploy
+deploy.sh
+*.deb
+
+# Claude Code
+.claude/
+CLAUDE.md
+publish-docker.sh
+.beads
+debug
