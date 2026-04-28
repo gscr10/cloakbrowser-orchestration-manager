@@ -149,6 +149,74 @@ The CDP URL is available in the toolbar (code icon) when a profile is running. T
 
 This build includes a single-node orchestration layer on top of the existing profile launcher. It reuses the same persistent profiles, KasmVNC viewer, and CDP proxy used by the manual Launch button.
 
+## CLI Usage
+
+The backend includes a lightweight CLI that calls the same HTTP API as the web UI. Use it when you want to manage profiles, proxies, tasks, and launched browsers without opening the GUI.
+
+```bash
+# Run from the repository root while the Manager API is running
+python -m backend.cli status
+```
+
+Configure the target API and optional auth token with flags or environment variables:
+
+```bash
+export CLOAK_MANAGER_URL=http://localhost:8080
+export CLOAK_MANAGER_TOKEN=your-secret-token
+
+python -m backend.cli profiles list
+```
+
+Create and launch a fingerprinted browser profile from the CLI:
+
+```bash
+python -m backend.cli profiles create worker-1 \
+  --platform windows \
+  --proxy http://user:pass@proxy.example.com:8080 \
+  --timezone America/New_York \
+  --locale en-US \
+  --screen-width 1920 \
+  --screen-height 1080
+
+python -m backend.cli profiles launch <profile-id>
+python -m backend.cli profiles status <profile-id>
+python -m backend.cli profiles cdp <profile-id>
+python -m backend.cli profiles stop <profile-id>
+```
+
+Import or create proxies without using the GUI:
+
+```bash
+python -m backend.cli proxies template > proxies.csv
+python -m backend.cli proxies import proxies.csv
+
+python -m backend.cli proxies create \
+  --protocol socks5 \
+  --host proxy.example.com \
+  --port 1080 \
+  --username user \
+  --password secret \
+  --region us \
+  --tags residential,automation
+```
+
+Submit scheduler tasks and inspect runs:
+
+```bash
+python -m backend.cli tasks create \
+  --profile-id <profile-id> \
+  --authorized-target "internal test app" \
+  --task-type open_url \
+  --url https://example.com
+
+python -m backend.cli scheduler status
+python -m backend.cli scheduler tick
+python -m backend.cli tasks list
+python -m backend.cli runs list
+```
+
+For advanced fields, pass an extra JSON object inline or as a file with `--json`. Values in `--json` override matching CLI flags.
+
 Proxy endpoints can be imported from CSV with these columns:
 
 ```csv
