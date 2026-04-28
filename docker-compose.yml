@@ -5,5 +5,10 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - ~/.cloakbrowser-manager:/data
+      - ./config:/config:ro
     environment:
       - AUTH_TOKEN=${AUTH_TOKEN:-}
+      - CONFIG_IMPORT_ON_START=${CONFIG_IMPORT_ON_START:-false}
+      - CONFIG_DIR=/config
+      - MAX_RUNNING_PROFILES=${MAX_RUNNING_PROFILES:-3}
+      - SCHEDULER_INTERVAL_SECONDS=${SCHEDULER_INTERVAL_SECONDS:-5}

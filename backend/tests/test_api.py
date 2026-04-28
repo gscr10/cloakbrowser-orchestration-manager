@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -220,6 +221,19 @@ def test_import_proxies(app_client: TestClient):
     data = resp.json()
     assert len(data["created"]) == 1
     assert data["errors"] == [{"line": 3, "error": "host is required"}]
+
+
+def test_import_external_config_endpoint(app_client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    (tmp_path / "profiles.json").write_text('[{"name":"worker-1","platform":"linux"}]', encoding="utf-8")
+    (tmp_path / "proxies.csv").write_text("protocol,host,port\nhttp,proxy.example.test,8080\n", encoding="utf-8")
+    monkeypatch.setattr(main, "CONFIG_DIR", tmp_path)
+
+    resp = app_client.post("/api/config/import")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["profiles"]["created"]) == 1
+    assert len(data["proxies"]["created"]) == 1
 
 
 def test_create_cancel_and_list_task(app_client: TestClient):

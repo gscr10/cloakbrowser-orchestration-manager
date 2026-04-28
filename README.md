@@ -100,6 +100,63 @@ npm run dev
 docker compose up --build
 ```
 
+### Docker Runtime Config
+
+The Docker image is designed to be a reusable runtime. Keep mutable browser state in `/data` and provide profiles/proxies as external config in `/config`.
+
+```bash
+docker run --shm-size=2g \
+  -p 8080:8080 \
+  -v cloak-data:/data \
+  -v ./config:/config:ro \
+  -e AUTH_TOKEN=your-secret-token \
+  -e CONFIG_IMPORT_ON_START=true \
+  -e MAX_RUNNING_PROFILES=3 \
+  cloakbrowser-orchestration-manager
+```
+
+Supported external config files:
+
+```text
+/config/profiles.json
+/config/proxies.csv
+```
+
+`profiles.json` can be either a list or an object with a `profiles` list. Profiles are matched by `name` and updated in place, so browser data directories remain stable across restarts.
+
+```json
+{
+  "profiles": [
+    {
+      "name": "worker-1",
+      "fingerprint_seed": 12345,
+      "platform": "windows",
+      "proxy": "http://user:pass@proxy.example.com:8080",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "screen_width": 1920,
+      "screen_height": 1080,
+      "tags": [{"tag": "automation"}]
+    }
+  ]
+}
+```
+
+`proxies.csv` uses the same format as the API import endpoint:
+
+```csv
+protocol,host,port,username,password,region,tags
+http,proxy.example.com,8080,user,secret,us,residential
+```
+
+Use `CONFIG_IMPORT_ON_START=true` to import these files during startup. You can also trigger the same import while the service is running:
+
+```bash
+python -m backend.cli config import
+```
+
+Profile cookies, cache, localStorage, and user data are not stored in config files. They persist under `/data/profiles/<profile-id>/`.
+
 ## Requirements
 
 - Docker (20.10+)

@@ -282,6 +282,13 @@ def create_proxy_endpoint(
     proxy_id = str(uuid.uuid4())
     now = _now()
     with get_db() as conn:
+        duplicate = conn.execute(
+            """SELECT id FROM proxy_endpoints
+            WHERE protocol = ? AND host = ? AND port = ? AND username IS ?""",
+            (protocol, host, port, username),
+        ).fetchone()
+        if duplicate:
+            raise sqlite3.IntegrityError("duplicate proxy endpoint")
         conn.execute(
             """INSERT INTO proxy_endpoints (
                 id, name, protocol, host, port, username, password, region,

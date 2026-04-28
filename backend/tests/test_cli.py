@@ -125,3 +125,12 @@ def test_cli_uses_environment_defaults(monkeypatch):
     assert client.kwargs["base_url"] == "http://env-manager.test"
     assert client.kwargs["headers"] == {"Authorization": "Bearer env-secret"}
     assert client.requests == [("GET", "/api/tasks", None)]
+
+
+def test_cli_imports_external_config(monkeypatch):
+    setup_fake_http(monkeypatch)
+
+    code = cli.main(["config", "import"])
+
+    assert code == 0
+    assert FakeHttpClient.instances[0].requests == [("POST", "/api/config/import", None)]

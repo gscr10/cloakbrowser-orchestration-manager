@@ -212,6 +212,10 @@ def cmd_scheduler_tick(client: ManagerClient, _args: argparse.Namespace) -> Any:
     return client.request("POST", "/api/scheduler/tick")
 
 
+def cmd_config_import(client: ManagerClient, _args: argparse.Namespace) -> Any:
+    return client.request("POST", "/api/config/import")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cloak-manager", description="CLI for the CloakBrowser Manager API")
     parser.add_argument("--base-url", default=os.environ.get("CLOAK_MANAGER_URL", DEFAULT_BASE_URL))
@@ -246,6 +250,11 @@ def build_parser() -> argparse.ArgumentParser:
     scheduler_status.set_defaults(func=cmd_scheduler_status)
     scheduler_tick = scheduler_cmds.add_parser("tick", help="Run one scheduler tick")
     scheduler_tick.set_defaults(func=cmd_scheduler_tick)
+
+    config = subparsers.add_parser("config", help="Manage external runtime config")
+    config_cmds = config.add_subparsers(dest="action", required=True)
+    config_import = config_cmds.add_parser("import", help="Import configured files from CONFIG_DIR")
+    config_import.set_defaults(func=cmd_config_import)
 
     return parser
 

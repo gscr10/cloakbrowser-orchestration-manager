@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 import starlette.requests
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from . import config_importer
 from . import database as db
 from . import scheduler
 from .browser_manager import BrowserManager
@@ -58,6 +59,8 @@ logging.getLogger("asyncio").setLevel(logging.WARNING)
 # If not set, all routes are open (local dev). If set, all /api/* routes
 # (except /api/auth/* and /api/status) require Bearer token or cookie.
 AUTH_TOKEN: str | None = os.environ.get("AUTH_TOKEN") or None
+CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", str(config_importer.DEFAULT_CONFIG_DIR)))
+CONFIG_IMPORT_ON_START = os.environ.get("CONFIG_IMPORT_ON_START", "false").lower() in {"1", "true", "yes", "on"}
 
 # Paths that bypass authentication even when AUTH_TOKEN is set
 _AUTH_EXEMPT = frozenset({"/api/auth/status", "/api/auth/login", "/api/status"})
@@ -391,6 +394,18 @@ def _filter_rfb_client_messages(data: bytes) -> bytes:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
+    if CONFIG_IMPORT_ON_START:
+        result = config_importer.import_config_dir(CONFIG_DIR)
+        logger.info(
+            "Imported external config from %s: profiles created=%d updated=%d errors=%d; proxies created=%d skipped=%d errors=%d",
+            CONFIG_DIR,
+            len(result["profiles"]["created"]),
+            len(result["profiles"]["updated"]),
+            len(result["profiles"]["errors"]),
+            len(result["proxies"]["created"]),
+            len(result["proxies"]["skipped"]),
+            len(result["proxies"]["errors"]),
+        )
     await browser_mgr.cleanup_stale()
     app.state.scheduler_task = asyncio.create_task(_scheduler_loop())
     logger.info("CloakBrowser Manager started")
@@ -591,6 +606,14 @@ async def get_system_status():
         binary_version=CHROMIUM_VERSION,
         profiles_total=len(profiles),
     )
+
+
+# ── External Config ──────────────────────────────────────────────────────────
+
+
+@app.post("/api/config/import")
+async def import_external_config():
+    return config_importer.import_config_dir(CONFIG_DIR)
 
 
 # ── Proxy Pool ───────────────────────────────────────────────────────────────
