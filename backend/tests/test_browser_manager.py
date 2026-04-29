@@ -14,7 +14,8 @@ from backend.browser_manager import (
     BrowserManager,
     RunningProfile,
 )
-from backend.runtime_limits import max_running_profiles
+import backend.runtime_limits as runtime_limits
+from backend.runtime_limits import launch_block_reason, max_running_profiles
 
 
 # ── _normalize_proxy ─────────────────────────────────────────────────────────
@@ -195,6 +196,25 @@ def test_max_running_profiles_rejects_out_of_range(monkeypatch: pytest.MonkeyPat
         max_running_profiles()
 
 
+def test_max_running_profiles_rejects_invalid_value(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MAX_RUNNING_PROFILES", "many")
+    with pytest.raises(ValueError, match="auto.*integer"):
+        max_running_profiles()
+
+
+def test_launch_block_reason_detects_memory_pressure(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(runtime_limits, "_read_cgroup_memory_limit_mb", lambda: 4096)
+    monkeypatch.setattr(runtime_limits, "_read_cgroup_memory_current_mb", lambda: 3900)
+    assert "Insufficient memory headroom" in (launch_block_reason() or "")
+
+
+def test_launch_block_reason_allows_memory_headroom(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(runtime_limits, "_read_cgroup_memory_limit_mb", lambda: 4096)
+    monkeypatch.setattr(runtime_limits, "_read_cgroup_memory_current_mb", lambda: 1024)
+    monkeypatch.setattr(runtime_limits, "_cpu_pressure_reason", lambda: None)
+    assert launch_block_reason() is None
+
+
 @pytest.mark.asyncio
 async def test_launch_rejects_when_running_limit_reached(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("MAX_RUNNING_PROFILES", "1")
@@ -207,6 +227,15 @@ async def test_launch_rejects_when_running_limit_reached(monkeypatch: pytest.Mon
         cdp_port=5100,
     )
     with pytest.raises(ValueError, match="Maximum running profiles reached: 1"):
+        await mgr.launch({"id": "next", "user_data_dir": "/tmp/next"})
+
+
+@pytest.mark.asyncio
+async def test_launch_rejects_when_resource_pressure(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("MAX_RUNNING_PROFILES", raising=False)
+    monkeypatch.setattr("backend.browser_manager.launch_block_reason", lambda: "low memory")
+    mgr = BrowserManager()
+    with pytest.raises(ValueError, match="Resource pressure prevents launching profile: low memory"):
         await mgr.launch({"id": "next", "user_data_dir": "/tmp/next"})
 
 

@@ -64,13 +64,13 @@ docker build -t cloakbrowser-orchestration-manager:local .
 启动服务，并挂载持久化数据和可选外部配置：
 
 ```bash
-docker run --shm-size=2g \
+docker run --shm-size=512m \
   -p 8080:8080 \
   -v cloak-manager-data:/data \
   -v ./config:/config:ro \
   -e CONFIG_IMPORT_ON_START=true \
   -e CONFIG_DIR=/config \
-  -e MAX_RUNNING_PROFILES=15 \
+  -e MAX_RUNNING_PROFILES=auto \
   -e SCHEDULER_INTERVAL_SECONDS=5 \
   cloakbrowser-orchestration-manager:local
 ```
@@ -80,7 +80,7 @@ docker run --shm-size=2g \
 如果需要保护 API 和 Web UI，设置 `AUTH_TOKEN`：
 
 ```bash
-docker run --shm-size=2g \
+docker run --shm-size=512m \
   -p 8080:8080 \
   -v cloak-manager-data:/data \
   -v ./config:/config:ro \
@@ -107,10 +107,10 @@ docker compose up --build
 | `AUTH_TOKEN` | 未设置 | 可选 Bearer token 和 Web UI 登录 token。未设置时 API 和 UI 默认开放。 |
 | `CONFIG_DIR` | `/config` | 外部配置文件目录。 |
 | `CONFIG_IMPORT_ON_START` | `false` | 为 true 时启动阶段导入 `/config/profiles.json` 和 `/config/proxies.csv`。 |
-| `MAX_RUNNING_PROFILES` | `15` | 单个服务允许同时运行的 Profile 上限，作用于 UI/API/CLI 手动启动和调度器启动，取值范围为 1-15。 |
+| `MAX_RUNNING_PROFILES` | `auto` | 单个服务允许同时运行的 Profile 上限。默认自适应，硬上限为 15；也可以显式设置 1-15 的数字。该限制作用于 UI/API/CLI 手动启动和调度器启动。 |
 | `SCHEDULER_INTERVAL_SECONDS` | `5` | 后台调度器轮询间隔。 |
 
-Chromium 运行需要足够的共享内存，建议启动容器时使用 `--shm-size=2g`。
+Chromium 运行需要足够的共享内存，建议启动容器时至少使用 `--shm-size=512m`。如果单机并发较高或页面较重，可以按服务器资源提高到 `1g`、`2g` 或更大。
 
 ## 外部配置
 
@@ -304,7 +304,7 @@ await page.goto("https://example.com");
 
 - 调度器运行在 FastAPI 后端进程中。
 - 每隔 `SCHEDULER_INTERVAL_SECONDS` 秒轮询排队任务。
-- 最多同时启动 `MAX_RUNNING_PROFILES` 个 Profile，该限制同样适用于 UI/API/CLI 的手动启动。
+- 默认最多同时启动 15 个 Profile，但每次启动前都会检查容器可见的内存余量和 CPU 压力；资源压力过高时会拒绝继续启动。该限制同样适用于 UI/API/CLI 的手动启动。
 - 启动任务时复用 `BrowserManager.launch(profile)`，因此 VNC、CDP、display 分配和持久化用户数据都与手动启动保持一致。
 - 可以从本地代理池选择代理并注入到运行时 Profile。
 - `open_url` 任务会在启动后打开指定 URL。
@@ -363,7 +363,7 @@ npm run build
 - 需要通过 VNC 可视化的 Profile 应保持 `headless=false`。
 - CLI 需要机器可读的单行 JSON 输出时可使用 `--compact`。
 - Dockerfile 默认设置 `TARGETARCH=amd64`，因此即使使用经典 `docker build`，没有 BuildKit 注入平台参数时也能构建 KasmVNC 下载路径。
-- 每台 Linux 服务器可以用同一镜像独立运行一个控制单元，通过不同 `/config` 和 `MAX_RUNNING_PROFILES` 控制该节点的 Profile、代理和并发规模。
+- 每台 Linux 服务器可以用同一镜像独立运行一个控制单元，通过不同 `/config` 控制该节点的 Profile 和代理。并发默认自适应，最多 15 个；需要固定上限时再设置 `MAX_RUNNING_PROFILES=1..15`。
 
 ## 运行要求
 

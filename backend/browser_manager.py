@@ -14,7 +14,7 @@ from typing import Any
 
 from cloakbrowser import launch_persistent_context_async
 
-from .runtime_limits import max_running_profiles
+from .runtime_limits import launch_block_reason, max_running_profiles
 from .vnc_manager import VNCManager
 
 logger = logging.getLogger("cloakbrowser.manager.browser")
@@ -175,6 +175,9 @@ class BrowserManager:
                 raise ValueError(
                     f"Maximum running profiles reached: {limit}"
                 )
+            reason = launch_block_reason()
+            if reason:
+                raise ValueError(f"Resource pressure prevents launching profile: {reason}")
             self._launching.add(profile_id)
 
         display, ws_port = await self.vnc.allocate()

@@ -1,6 +1,7 @@
 services:
   manager:
     build: .
+    shm_size: 512m
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -10,5 +11,5 @@ services:
       - AUTH_TOKEN=${AUTH_TOKEN:-}
       - CONFIG_IMPORT_ON_START=${CONFIG_IMPORT_ON_START:-false}
       - CONFIG_DIR=/config
-      - MAX_RUNNING_PROFILES=${MAX_RUNNING_PROFILES:-15}
+      - MAX_RUNNING_PROFILES=${MAX_RUNNING_PROFILES:-auto}
       - SCHEDULER_INTERVAL_SECONDS=${SCHEDULER_INTERVAL_SECONDS:-5}
