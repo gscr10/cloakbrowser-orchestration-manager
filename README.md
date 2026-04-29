@@ -1,28 +1,37 @@
 # CloakBrowser Orchestration Manager
 
-Single-node orchestration service for running isolated CloakBrowser profiles with a web UI, HTTP API, CLI, persistent browser state, reusable proxy configuration, and a lightweight local task scheduler.
+这是一个面向单机部署的 CloakBrowser 编排管理服务，用于运行隔离的浏览器 Profile，并提供 Web UI、HTTP API、CLI、持久化浏览器状态、代理池配置和轻量级本地任务调度能力。
 
-This repository is maintained as an independent project at `gscr10/cloakbrowser-orchestration-manager`. It builds on CloakBrowser as the browser runtime, but the operational focus here is different from a plain profile GUI: the Docker image is treated as a reusable runtime, while profiles, proxies, task execution, and automation access are managed through external config, API, and CLI.
+本仓库作为独立项目维护：`gscr10/cloakbrowser-orchestration-manager`。项目使用 CloakBrowser 作为浏览器运行时，但目标不是简单复刻 Profile GUI，而是把 Docker 镜像作为稳定运行时，把 Profile、代理、任务调度和自动化接入通过外部配置、API 和 CLI 管理起来。
 
-## What This Project Provides
+## 项目能力
 
-- Browser profile CRUD with persistent per-profile user data under `/data/profiles/<profile-id>/`.
-- Profile launch/stop/status APIs backed by the existing CloakBrowser lifecycle, KasmVNC display, and CDP proxy.
-- Web UI for manual profile management and live VNC viewing.
-- HTTP API for profiles, proxy endpoints, config import, scheduler tasks, runs, auth, VNC, clipboard, and CDP.
-- CLI client at `python -m backend.cli` for headless administration without opening the GUI.
-- Docker runtime configuration through mounted `/config/profiles.json` and `/config/proxies.csv`.
-- Local SQLite storage under `/data` for profiles, proxy metadata, tasks, runs, and persisted browser sessions.
-- Single-node scheduler that starts queued authorized tasks within a configurable local concurrency limit.
-- Optional token authentication for the web UI and API.
+- 浏览器 Profile 的创建、查询、更新、删除，用户数据持久化在 `/data/profiles/<profile-id>/`。
+- Profile 启动、停止、状态查询 API，复用 CloakBrowser 生命周期、KasmVNC 显示和 CDP 代理。
+- Web UI 支持手动管理 Profile，并通过 VNC 查看运行中的浏览器。
+- HTTP API 覆盖 profiles、proxy endpoints、config import、scheduler tasks、runs、auth、VNC、clipboard 和 CDP。
+- CLI 客户端 `python -m backend.cli`，可在不打开 GUI 的情况下管理服务。
+- Docker 运行时支持挂载 `/config/profiles.json` 和 `/config/proxies.csv` 进行外部配置导入。
+- SQLite 本地存储位于 `/data`，保存 Profile、代理元数据、任务、运行记录和浏览器会话状态。
+- 单机调度器按本地并发上限启动队列中的授权任务。
+- 可选 token 认证，用于保护 Web UI 和 API。
 
-## Intended Use
+## 适用场景
 
-Use this service for authorized browser automation, internal test environments, profile isolation, proxy assignment, multi-environment verification, and local/manual debugging through VNC.
+本项目适用于授权范围内的浏览器自动化、内部测试环境、Profile 隔离、代理分配、多环境验证，以及需要通过 VNC 本地观察浏览器行为的调试场景。
 
-Do not use this project for credential stuffing, spam, bulk signups, unauthorized scraping, account takeover, CAPTCHA bypass, platform abuse, or other activity outside your authorization boundary. The scheduler includes a small local policy guard for obvious disallowed task descriptions, but operational responsibility remains with the operator.
+请不要将本项目用于凭据填充、垃圾信息、批量注册、未授权爬取、账号接管、验证码绕过、平台滥用或任何超出授权范围的活动。调度器包含基础的本地策略检查，用于拒绝明显不合规的任务描述，但最终使用责任仍由操作者承担。
 
-## Architecture
+## 上游参考项目
+
+本项目已作为独立仓库维护，但实现上参考和依赖了以下项目：
+
+- `CloakBrowser`: https://github.com/CloakHQ/CloakBrowser
+- `CloakBrowser-Manager`: https://github.com/CloakHQ/CloakBrowser-Manager
+
+当前仓库不会保留上游仓库的 Git 远端关系，也不会以 fork 形式维护。README 中的运行方式、API、CLI 和 Docker 配置均以本仓库当前实现为准。
+
+## 架构概览
 
 ```text
 React UI / CLI / external client
@@ -34,7 +43,7 @@ React UI / CLI / external client
   -> Scheduler consumes queued tasks and applies proxy/runtime settings
 ```
 
-Key runtime paths:
+关键运行路径：
 
 ```text
 /data
@@ -44,15 +53,15 @@ Key runtime paths:
 /config/proxies.csv
 ```
 
-## Quick Start With Docker
+## Docker 快速启动
 
-Build the local image:
+构建本地镜像：
 
 ```bash
 docker build -t cloakbrowser-orchestration-manager:local .
 ```
 
-Run the service with persistent state and optional external config:
+启动服务，并挂载持久化数据和可选外部配置：
 
 ```bash
 docker run --shm-size=2g \
@@ -66,9 +75,9 @@ docker run --shm-size=2g \
   cloakbrowser-orchestration-manager:local
 ```
 
-Open `http://localhost:8080`.
+打开 `http://localhost:8080` 访问 Web UI。
 
-If you need API/UI protection, set `AUTH_TOKEN`:
+如果需要保护 API 和 Web UI，设置 `AUTH_TOKEN`：
 
 ```bash
 docker run --shm-size=2g \
@@ -83,38 +92,38 @@ docker run --shm-size=2g \
 
 ## Docker Compose
 
-The included `docker-compose.yml` builds the local image, binds the service to `127.0.0.1:8080`, stores data in `~/.cloakbrowser-manager`, and mounts `./config` into `/config`.
+仓库内的 `docker-compose.yml` 会构建本地镜像，将服务绑定到 `127.0.0.1:8080`，将数据保存到 `~/.cloakbrowser-manager`，并把 `./config` 挂载到容器内 `/config`。
 
 ```bash
 docker compose up --build
 ```
 
-If your environment only has the legacy `docker-compose` binary and it fails due to Python package compatibility, use the `docker build` and `docker run` commands above.
+如果环境里只有旧版 `docker-compose`，并且遇到 Python 包兼容问题，可以改用上面的 `docker build` 和 `docker run` 命令。
 
-## Runtime Environment Variables
+## 运行时环境变量
 
-| Variable | Default | Purpose |
+| 变量 | 默认值 | 作用 |
 | --- | --- | --- |
-| `AUTH_TOKEN` | unset | Optional bearer token and UI login token. When unset, API and UI are open. |
-| `CONFIG_DIR` | `/config` | Directory containing external config files. |
-| `CONFIG_IMPORT_ON_START` | `false` | Import `/config/profiles.json` and `/config/proxies.csv` during startup when true. |
-| `MAX_RUNNING_PROFILES` | `3` | Local concurrency limit used by the scheduler. |
-| `SCHEDULER_INTERVAL_SECONDS` | `5` | Background scheduler polling interval. |
+| `AUTH_TOKEN` | 未设置 | 可选 Bearer token 和 Web UI 登录 token。未设置时 API 和 UI 默认开放。 |
+| `CONFIG_DIR` | `/config` | 外部配置文件目录。 |
+| `CONFIG_IMPORT_ON_START` | `false` | 为 true 时启动阶段导入 `/config/profiles.json` 和 `/config/proxies.csv`。 |
+| `MAX_RUNNING_PROFILES` | `3` | 调度器使用的本地并发上限。 |
+| `SCHEDULER_INTERVAL_SECONDS` | `5` | 后台调度器轮询间隔。 |
 
-The container should run with enough shared memory for Chromium. `--shm-size=2g` is the recommended starting point.
+Chromium 运行需要足够的共享内存，建议启动容器时使用 `--shm-size=2g`。
 
-## External Config
+## 外部配置
 
-External config is optional. It is intended for reproducible runtime bootstrapping while keeping browser state persistent in `/data`.
+外部配置是可选能力，用于让运行时启动过程可复现，同时把浏览器状态继续保存在 `/data`。
 
-Supported files:
+支持的配置文件：
 
 ```text
 /config/profiles.json
 /config/proxies.csv
 ```
 
-`profiles.json` can be either a list or an object with a `profiles` list. Profiles are matched by `name`; existing profiles are updated in place so their `/data/profiles/<profile-id>/` directories remain stable.
+`profiles.json` 可以是数组，也可以是包含 `profiles` 数组的对象。Profile 按 `name` 匹配；已存在的 Profile 会原地更新，因此其 `/data/profiles/<profile-id>/` 目录保持稳定。
 
 ```json
 {
@@ -135,30 +144,30 @@ Supported files:
 }
 ```
 
-`proxies.csv` uses this header:
+`proxies.csv` 使用以下表头：
 
 ```csv
 protocol,host,port,username,password,region,tags
 http,proxy.example.com,8080,user,secret,us,residential
 ```
 
-Import config at startup with `CONFIG_IMPORT_ON_START=true`, or trigger it while the service is running:
+可以在启动时通过 `CONFIG_IMPORT_ON_START=true` 导入配置，也可以在服务运行中手动触发：
 
 ```bash
 python -m backend.cli config import
 ```
 
-The import endpoint is idempotent for profiles by `name`. Proxy import skips duplicates based on protocol, host, port, and username.
+导入逻辑对 Profile 按 `name` 幂等处理。代理导入会跳过协议、host、port、username 相同的重复记录。
 
-## CLI Usage
+## CLI 用法
 
-The CLI is a thin HTTP client for the same backend API used by the UI.
+CLI 是后端 HTTP API 的轻量客户端，和 Web UI 使用同一套服务接口。
 
 ```bash
 python -m backend.cli status
 ```
 
-Configure the target API with flags or environment variables:
+通过参数或环境变量指定目标服务：
 
 ```bash
 export CLOAK_MANAGER_URL=http://localhost:8080
@@ -167,7 +176,7 @@ export CLOAK_MANAGER_TOKEN=your-secret-token
 python -m backend.cli profiles list
 ```
 
-Global options:
+全局参数：
 
 ```text
 --base-url http://localhost:8080
@@ -176,7 +185,7 @@ Global options:
 --compact
 ```
 
-Profile commands:
+Profile 管理命令：
 
 ```bash
 python -m backend.cli profiles list
@@ -189,7 +198,7 @@ python -m backend.cli profiles cdp <profile-id>
 python -m backend.cli profiles stop <profile-id>
 ```
 
-Proxy commands:
+代理管理命令：
 
 ```bash
 python -m backend.cli proxies list
@@ -198,7 +207,7 @@ python -m backend.cli proxies import proxies.csv
 python -m backend.cli proxies create --protocol socks5 --host proxy.example.com --port 1080 --username user --password secret --region us --tags residential,automation
 ```
 
-Task and scheduler commands:
+任务和调度命令：
 
 ```bash
 python -m backend.cli tasks create --profile-id <profile-id> --authorized-target "internal test app" --task-type open_url --url https://example.com
@@ -209,38 +218,38 @@ python -m backend.cli scheduler status
 python -m backend.cli scheduler tick
 ```
 
-For advanced fields, pass `--json` with an inline JSON object or a JSON file path. Values from `--json` override matching flags.
+高级字段可以通过 `--json` 传入内联 JSON 对象或 JSON 文件路径。`--json` 中的值会覆盖同名命令行参数。
 
-## HTTP API Overview
+## HTTP API 概览
 
-Core endpoints:
+核心接口：
 
-| Method | Path | Purpose |
+| 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `GET` | `/api/status` | Health/status summary. |
-| `GET` | `/api/profiles` | List profiles. |
-| `POST` | `/api/profiles` | Create profile. |
-| `GET` | `/api/profiles/{profile_id}` | Get profile. |
-| `PUT` | `/api/profiles/{profile_id}` | Update profile. |
-| `DELETE` | `/api/profiles/{profile_id}` | Delete stopped profile. |
-| `POST` | `/api/profiles/{profile_id}/launch` | Launch profile. |
-| `POST` | `/api/profiles/{profile_id}/stop` | Stop profile. |
-| `GET` | `/api/profiles/{profile_id}/status` | Runtime status. |
-| `GET` | `/api/profiles/{profile_id}/cdp` | CDP connection information. |
-| `WS` | `/api/profiles/{profile_id}/vnc` | VNC websocket proxy. |
-| `POST` | `/api/profiles/{profile_id}/clipboard` | Push clipboard text to a running profile. |
-| `GET` | `/api/proxies` | List proxy endpoints. |
-| `POST` | `/api/proxies` | Create proxy endpoint. |
-| `POST` | `/api/proxies/import` | Import proxy CSV. |
-| `POST` | `/api/config/import` | Import `/config` files. |
-| `GET` | `/api/tasks` | List scheduler tasks. |
-| `POST` | `/api/tasks` | Queue task. |
-| `POST` | `/api/tasks/{task_id}/cancel` | Cancel queued task. |
-| `GET` | `/api/runs` | List profile runs. |
-| `GET` | `/api/scheduler/status` | Scheduler status. |
-| `POST` | `/api/scheduler/tick` | Run one scheduler tick. |
+| `GET` | `/api/status` | 服务健康和状态摘要。 |
+| `GET` | `/api/profiles` | 列出 Profile。 |
+| `POST` | `/api/profiles` | 创建 Profile。 |
+| `GET` | `/api/profiles/{profile_id}` | 查询 Profile。 |
+| `PUT` | `/api/profiles/{profile_id}` | 更新 Profile。 |
+| `DELETE` | `/api/profiles/{profile_id}` | 删除已停止的 Profile。 |
+| `POST` | `/api/profiles/{profile_id}/launch` | 启动 Profile。 |
+| `POST` | `/api/profiles/{profile_id}/stop` | 停止 Profile。 |
+| `GET` | `/api/profiles/{profile_id}/status` | 查询运行状态。 |
+| `GET` | `/api/profiles/{profile_id}/cdp` | 查询 CDP 连接信息。 |
+| `WS` | `/api/profiles/{profile_id}/vnc` | VNC WebSocket 代理。 |
+| `POST` | `/api/profiles/{profile_id}/clipboard` | 向运行中的 Profile 写入剪贴板文本。 |
+| `GET` | `/api/proxies` | 列出代理端点。 |
+| `POST` | `/api/proxies` | 创建代理端点。 |
+| `POST` | `/api/proxies/import` | 导入代理 CSV。 |
+| `POST` | `/api/config/import` | 导入 `/config` 文件。 |
+| `GET` | `/api/tasks` | 列出调度任务。 |
+| `POST` | `/api/tasks` | 创建队列任务。 |
+| `POST` | `/api/tasks/{task_id}/cancel` | 取消排队中的任务。 |
+| `GET` | `/api/runs` | 列出 Profile 运行记录。 |
+| `GET` | `/api/scheduler/status` | 查询调度器状态。 |
+| `POST` | `/api/scheduler/tick` | 手动执行一次调度 tick。 |
 
-Example profile launch flow:
+Profile 启动示例：
 
 ```bash
 curl -X POST http://localhost:8080/api/profiles \
@@ -252,7 +261,7 @@ curl -X POST http://localhost:8080/api/profiles/<profile-id>/launch
 curl http://localhost:8080/api/profiles/<profile-id>/cdp
 ```
 
-Example task queue flow:
+任务队列示例：
 
 ```bash
 curl -X POST http://localhost:8080/api/tasks \
@@ -262,9 +271,9 @@ curl -X POST http://localhost:8080/api/tasks \
 curl http://localhost:8080/api/scheduler/status
 ```
 
-## CDP Automation
+## CDP 自动化
 
-Every running profile exposes a Chrome DevTools Protocol endpoint through the manager. Use it with Playwright or Puppeteer while optionally watching the same browser session in the web UI through VNC.
+每个运行中的 Profile 都会通过 Manager 暴露 Chrome DevTools Protocol 端点。你可以用 Playwright 或 Puppeteer 连接同一个浏览器会话，同时也可以在 Web UI 中通过 VNC 观察该会话。
 
 ```python
 from playwright.async_api import async_playwright
@@ -287,36 +296,36 @@ const page = browser.contexts()[0].pages()[0];
 await page.goto("https://example.com");
 ```
 
-For a visible VNC session, create or update the profile with `headless=false`. A headless profile can still run and expose CDP, but VNC will not show a visible browser window.
+如果需要在 VNC 中看到浏览器窗口，请创建或更新 Profile 为 `headless=false`。`headless=true` 的 Profile 仍可运行并暴露 CDP，但 VNC 不会显示可见浏览器窗口。
 
-## Scheduler Behavior
+## 调度器行为
 
-The scheduler is intentionally small and local:
+调度器刻意保持轻量，并只面向单机运行：
 
-- It runs inside the FastAPI backend.
-- It polls queued tasks every `SCHEDULER_INTERVAL_SECONDS` seconds.
-- It starts at most `MAX_RUNNING_PROFILES` profiles concurrently.
-- It reuses `BrowserManager.launch(profile)` so VNC, CDP, display allocation, and persistent user data follow the same path as manual launches.
-- It can assign a proxy endpoint from the local proxy pool at runtime.
-- `open_url` tasks open a URL after launch.
-- `external_cdp` tasks reserve/start a profile for an external automation client to connect over CDP.
+- 调度器运行在 FastAPI 后端进程中。
+- 每隔 `SCHEDULER_INTERVAL_SECONDS` 秒轮询排队任务。
+- 最多同时启动 `MAX_RUNNING_PROFILES` 个 Profile。
+- 启动任务时复用 `BrowserManager.launch(profile)`，因此 VNC、CDP、display 分配和持久化用户数据都与手动启动保持一致。
+- 可以从本地代理池选择代理并注入到运行时 Profile。
+- `open_url` 任务会在启动后打开指定 URL。
+- `external_cdp` 任务用于启动 Profile，供外部自动化客户端通过 CDP 接入。
 
-## Authentication
+## 认证
 
-Authentication is disabled by default for local-only usage. Set `AUTH_TOKEN` to require login/API bearer auth.
+默认情况下认证关闭，适合本地使用。设置 `AUTH_TOKEN` 后，将启用登录和 API Bearer Token 校验。
 
-When `AUTH_TOKEN` is set:
+设置 `AUTH_TOKEN` 后：
 
-- The web UI shows a login flow.
-- API clients must send `Authorization: Bearer <token>`.
-- VNC and CDP websocket routes require the same auth context.
-- `/api/status`, `/api/auth/status`, and `/api/auth/login` remain available for health/login flows.
+- Web UI 会显示登录流程。
+- API 客户端需要发送 `Authorization: Bearer <token>`。
+- VNC 和 CDP WebSocket 路由需要同一认证上下文。
+- `/api/status`、`/api/auth/status` 和 `/api/auth/login` 会保留给健康检查和登录流程使用。
 
-If the service is exposed beyond localhost, terminate HTTPS in front of it and protect the deployment appropriately. The manager itself serves HTTP.
+如果服务暴露到 localhost 之外，应在前面放置 HTTPS 终止层，并根据部署环境做好访问控制。Manager 本身提供 HTTP 服务。
 
-## Development
+## 开发
 
-Backend setup:
+后端开发环境：
 
 ```bash
 python -m venv .venv
@@ -325,7 +334,7 @@ pip install -r backend/requirements.txt
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
 ```
 
-Frontend setup:
+前端开发环境：
 
 ```bash
 cd frontend
@@ -333,44 +342,45 @@ npm install
 npm run dev
 ```
 
-Backend tests:
+后端测试：
 
 ```bash
 python -m pytest backend/tests
 ```
 
-Frontend production build:
+前端生产构建：
 
 ```bash
 cd frontend
 npm run build
 ```
 
-## Operational Notes
+## 运维注意事项
 
-- Store mutable runtime state in `/data`, not in the image.
-- Store desired bootstrap config in `/config`, mounted read-only when possible.
-- Do not put cookies, cache, localStorage, or browser profile state into `profiles.json`; those live under `/data/profiles/<profile-id>/`.
-- Keep `headless=false` for profiles that must be viewed through VNC.
-- Use `--compact` with the CLI when machine-readable one-line JSON output is preferred.
-- The Dockerfile sets a default `TARGETARCH=amd64` so classic `docker build` works even without BuildKit-provided platform args.
+- 将可变运行时状态保存在 `/data`，不要写入镜像。
+- 将期望的启动配置放在 `/config`，生产运行时尽量只读挂载。
+- 不要把 cookies、cache、localStorage 或浏览器 Profile 状态写进 `profiles.json`；这些状态保存在 `/data/profiles/<profile-id>/`。
+- 需要通过 VNC 可视化的 Profile 应保持 `headless=false`。
+- CLI 需要机器可读的单行 JSON 输出时可使用 `--compact`。
+- Dockerfile 默认设置 `TARGETARCH=amd64`，因此即使使用经典 `docker build`，没有 BuildKit 注入平台参数时也能构建 KasmVNC 下载路径。
 
-## Requirements
+## 运行要求
 
-- Docker 20.10 or newer for the recommended runtime.
-- Around 2 GB of disk for image layers and browser binaries.
-- Enough memory for the backend plus each running Chromium profile.
-- Python 3.11+ for local backend development and tests.
-- Node.js 20+ for frontend development and production builds.
+- 推荐使用 Docker 20.10 或更新版本运行服务。
+- 镜像层和浏览器二进制文件大约需要 2 GB 磁盘空间。
+- 需要为后端和每个运行中的 Chromium Profile 预留足够内存。
+- 本地后端开发和测试建议使用 Python 3.11+。
+- 前端开发和生产构建建议使用 Node.js 20+。
 
-## License And Runtime Dependency
+## 许可证和运行时依赖
 
-- Application source code: MIT, see [LICENSE](LICENSE).
-- CloakBrowser binary/runtime: governed separately, see [BINARY-LICENSE.md](BINARY-LICENSE.md).
+- 应用源码：MIT，见 [LICENSE](LICENSE)。
+- CloakBrowser 二进制和运行时：单独授权，见 [BINARY-LICENSE.md](BINARY-LICENSE.md)。
 
-This application requires the CloakBrowser Chromium runtime to launch profiles. The binary may be downloaded by the runtime as needed and is governed by its own license terms.
+本应用需要 CloakBrowser Chromium 运行时才能启动 Profile。运行时可能按需下载浏览器二进制文件，该部分受其自身许可证约束。
 
-## Repository
+## 仓库信息
 
-- Project repository: https://github.com/gscr10/cloakbrowser-orchestration-manager
-- CloakBrowser runtime project: https://github.com/CloakHQ/CloakBrowser
+- 当前项目仓库：https://github.com/gscr10/cloakbrowser-orchestration-manager
+- 上游参考项目 `CloakBrowser`：https://github.com/CloakHQ/CloakBrowser
+- 上游参考项目 `CloakBrowser-Manager`：https://github.com/CloakHQ/CloakBrowser-Manager
