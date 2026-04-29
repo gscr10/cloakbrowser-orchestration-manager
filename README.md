@@ -1,128 +1,120 @@
-<p align="center">
-<img src="https://i.imgur.com/cqkp6fG.png" width="500" alt="CloakBrowser">
-</p>
+# CloakBrowser Orchestration Manager
 
-<h3 align="center">Browser Profile Manager for CloakBrowser</h3>
+Single-node orchestration service for running isolated CloakBrowser profiles with a web UI, HTTP API, CLI, persistent browser state, reusable proxy configuration, and a lightweight local task scheduler.
 
-<p align="center">
-Create, manage, and launch isolated browser profiles with unique fingerprints.<br>
-Free, self-hosted alternative to Multilogin, GoLogin, and AdsPower.
-</p>
+This repository is maintained as an independent project at `gscr10/cloakbrowser-orchestration-manager`. It builds on CloakBrowser as the browser runtime, but the operational focus here is different from a plain profile GUI: the Docker image is treated as a reusable runtime, while profiles, proxies, task execution, and automation access are managed through external config, API, and CLI.
 
-<p align="center">
-<a href="https://github.com/CloakHQ/CloakBrowser"><img src="https://img.shields.io/github/stars/cloakhq/cloakbrowser?label=CloakBrowser" alt="Stars"></a>
-<a href="https://hub.docker.com/r/cloakhq/cloakbrowser-manager"><img src="https://img.shields.io/docker/pulls/cloakhq/cloakbrowser-manager?label=docker&logo=docker&logoColor=white" alt="Docker Pulls"></a>
-<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
-</p>
+## What This Project Provides
 
----
+- Browser profile CRUD with persistent per-profile user data under `/data/profiles/<profile-id>/`.
+- Profile launch/stop/status APIs backed by the existing CloakBrowser lifecycle, KasmVNC display, and CDP proxy.
+- Web UI for manual profile management and live VNC viewing.
+- HTTP API for profiles, proxy endpoints, config import, scheduler tasks, runs, auth, VNC, clipboard, and CDP.
+- CLI client at `python -m backend.cli` for headless administration without opening the GUI.
+- Docker runtime configuration through mounted `/config/profiles.json` and `/config/proxies.csv`.
+- Local SQLite storage under `/data` for profiles, proxy metadata, tasks, runs, and persisted browser sessions.
+- Single-node scheduler that starts queued authorized tasks within a configurable local concurrency limit.
+- Optional token authentication for the web UI and API.
 
-<p align="center">
-<img src="https://i.imgur.com/twdX81Q.png" width="800" alt="CloakBrowser Manager — Browser View">
-<br>
-<img src="https://i.imgur.com/XFYn1qY.png" width="800" alt="CloakBrowser Manager — Profile Settings">
-</p>
+## Intended Use
 
-Each profile is an isolated CloakBrowser instance with its own fingerprint, proxy, cookies, and session data. Profiles persist across restarts. Everything runs in one Docker container.
+Use this service for authorized browser automation, internal test environments, profile isolation, proxy assignment, multi-environment verification, and local/manual debugging through VNC.
 
-```bash
-docker run -p 8080:8080 -v cloakprofiles:/data cloakhq/cloakbrowser-manager
+Do not use this project for credential stuffing, spam, bulk signups, unauthorized scraping, account takeover, CAPTCHA bypass, platform abuse, or other activity outside your authorization boundary. The scheduler includes a small local policy guard for obvious disallowed task descriptions, but operational responsibility remains with the operator.
+
+## Architecture
+
+```text
+React UI / CLI / external client
+  -> FastAPI backend on port 8080
+  -> SQLite database under /data
+  -> BrowserManager launches CloakBrowser profiles
+  -> KasmVNC exposes live browser viewing
+  -> CDP proxy exposes Playwright/Puppeteer automation access
+  -> Scheduler consumes queued tasks and applies proxy/runtime settings
 ```
 
-Or build from source:
+Key runtime paths:
 
-```bash
-git clone https://github.com/CloakHQ/CloakBrowser-Manager.git
-cd CloakBrowser-Manager
-docker compose up --build
+```text
+/data
+/data/manager.db
+/data/profiles/<profile-id>/
+/config/profiles.json
+/config/proxies.csv
 ```
 
-Open [http://localhost:8080](http://localhost:8080) in your browser. Create a profile. Click Launch. Done.
+## Quick Start With Docker
 
-> **Early alpha** — this project is under active development. Expect bugs. If you find one, please [open an issue](https://github.com/CloakHQ/CloakBrowser-Manager/issues).
-
-## Why Not Just Use a VPN?
-
-A VPN only changes your IP. Incognito only clears cookies. Chrome profiles share the same hardware fingerprint underneath. Platforms use 50+ signals to link your accounts — canvas, WebGL, audio, GPU, fonts, screen size, timezone.
-
-Each CloakBrowser profile generates a completely different device identity. To the website, each profile looks like a different computer.
-
-| Solution | What it changes | Accounts linked? |
-|----------|----------------|-----------------|
-| VPN | IP address only | Yes — same fingerprint |
-| Incognito | Clears cookies | Yes — same fingerprint |
-| Chrome profiles | Separate bookmarks/cookies | Yes — same hardware fingerprint |
-| **CloakBrowser** | **Everything — full device identity per profile** | **No** |
-
-## Features
-
-- **Profile management** — create, edit, delete browser profiles with unique fingerprints
-- **Per-profile settings** — fingerprint seed, proxy, timezone, locale, user agent, screen size, platform
-- **One-click launch/stop** — each profile runs as an isolated CloakBrowser instance
-- **Session persistence** — cookies, localStorage, and cache survive browser restarts
-- **In-browser viewing** — interact with launched browsers via noVNC, directly in the web GUI
-- **Playwright/Puppeteer API** — connect to any running profile programmatically via CDP, while still watching it live in the browser
-- **Proxy pool** — import and manage reusable proxy endpoints from CSV
-- **Task scheduler** — queue authorized browser tasks and let the Manager launch profiles automatically within local concurrency limits
-- **Optional authentication** — protect the web UI and API with a single token, or run wide open locally
-- **Powered by CloakBrowser** — 32 source-level C++ patches, passes Cloudflare Turnstile, 0.9 reCAPTCHA v3 score
-
-## Stack
-
-- **Backend**: FastAPI (Python)
-- **Frontend**: React + Tailwind CSS
-- **Browser viewer**: noVNC (WebSocket-based VNC client)
-- **Database**: SQLite
-- **Browser engine**: [CloakBrowser](https://github.com/CloakHQ/CloakBrowser) (stealth Chromium binary)
-
-## Development
-
-### Backend
+Build the local image:
 
 ```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8080
+docker build -t cloakbrowser-orchestration-manager:local .
 ```
 
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### Docker
-
-```bash
-docker compose up --build
-```
-
-### Docker Runtime Config
-
-The Docker image is designed to be a reusable runtime. Keep mutable browser state in `/data` and provide profiles/proxies as external config in `/config`.
+Run the service with persistent state and optional external config:
 
 ```bash
 docker run --shm-size=2g \
   -p 8080:8080 \
-  -v cloak-data:/data \
+  -v cloak-manager-data:/data \
+  -v ./config:/config:ro \
+  -e CONFIG_IMPORT_ON_START=true \
+  -e CONFIG_DIR=/config \
+  -e MAX_RUNNING_PROFILES=3 \
+  -e SCHEDULER_INTERVAL_SECONDS=5 \
+  cloakbrowser-orchestration-manager:local
+```
+
+Open `http://localhost:8080`.
+
+If you need API/UI protection, set `AUTH_TOKEN`:
+
+```bash
+docker run --shm-size=2g \
+  -p 8080:8080 \
+  -v cloak-manager-data:/data \
   -v ./config:/config:ro \
   -e AUTH_TOKEN=your-secret-token \
   -e CONFIG_IMPORT_ON_START=true \
-  -e MAX_RUNNING_PROFILES=3 \
-  cloakbrowser-orchestration-manager
+  -e CONFIG_DIR=/config \
+  cloakbrowser-orchestration-manager:local
 ```
 
-Supported external config files:
+## Docker Compose
+
+The included `docker-compose.yml` builds the local image, binds the service to `127.0.0.1:8080`, stores data in `~/.cloakbrowser-manager`, and mounts `./config` into `/config`.
+
+```bash
+docker compose up --build
+```
+
+If your environment only has the legacy `docker-compose` binary and it fails due to Python package compatibility, use the `docker build` and `docker run` commands above.
+
+## Runtime Environment Variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AUTH_TOKEN` | unset | Optional bearer token and UI login token. When unset, API and UI are open. |
+| `CONFIG_DIR` | `/config` | Directory containing external config files. |
+| `CONFIG_IMPORT_ON_START` | `false` | Import `/config/profiles.json` and `/config/proxies.csv` during startup when true. |
+| `MAX_RUNNING_PROFILES` | `3` | Local concurrency limit used by the scheduler. |
+| `SCHEDULER_INTERVAL_SECONDS` | `5` | Background scheduler polling interval. |
+
+The container should run with enough shared memory for Chromium. `--shm-size=2g` is the recommended starting point.
+
+## External Config
+
+External config is optional. It is intended for reproducible runtime bootstrapping while keeping browser state persistent in `/data`.
+
+Supported files:
 
 ```text
 /config/profiles.json
 /config/proxies.csv
 ```
 
-`profiles.json` can be either a list or an object with a `profiles` list. Profiles are matched by `name` and updated in place, so browser data directories remain stable across restarts.
+`profiles.json` can be either a list or an object with a `profiles` list. Profiles are matched by `name`; existing profiles are updated in place so their `/data/profiles/<profile-id>/` directories remain stable.
 
 ```json
 {
@@ -136,48 +128,143 @@ Supported external config files:
       "locale": "en-US",
       "screen_width": 1920,
       "screen_height": 1080,
+      "headless": false,
       "tags": [{"tag": "automation"}]
     }
   ]
 }
 ```
 
-`proxies.csv` uses the same format as the API import endpoint:
+`proxies.csv` uses this header:
 
 ```csv
 protocol,host,port,username,password,region,tags
 http,proxy.example.com,8080,user,secret,us,residential
 ```
 
-Use `CONFIG_IMPORT_ON_START=true` to import these files during startup. You can also trigger the same import while the service is running:
+Import config at startup with `CONFIG_IMPORT_ON_START=true`, or trigger it while the service is running:
 
 ```bash
 python -m backend.cli config import
 ```
 
-Profile cookies, cache, localStorage, and user data are not stored in config files. They persist under `/data/profiles/<profile-id>/`.
+The import endpoint is idempotent for profiles by `name`. Proxy import skips duplicates based on protocol, host, port, and username.
 
-## Requirements
+## CLI Usage
 
-- Docker (20.10+)
-- ~2 GB disk (image + binary)
-- ~512 MB RAM per running profile
-
-## Updating
-
-Pull the latest image and restart:
+The CLI is a thin HTTP client for the same backend API used by the UI.
 
 ```bash
-docker pull cloakhq/cloakbrowser-manager
-docker stop <container-id>
-docker run -p 8080:8080 -v cloakprofiles:/data cloakhq/cloakbrowser-manager
+python -m backend.cli status
 ```
 
-Your profiles and session data are stored in the `cloakprofiles` volume and persist across updates.
+Configure the target API with flags or environment variables:
 
-## Automation API
+```bash
+export CLOAK_MANAGER_URL=http://localhost:8080
+export CLOAK_MANAGER_TOKEN=your-secret-token
 
-Every running profile exposes a CDP (Chrome DevTools Protocol) endpoint. Connect Playwright or Puppeteer to automate a profile while watching it live in the browser.
+python -m backend.cli profiles list
+```
+
+Global options:
+
+```text
+--base-url http://localhost:8080
+--token <token>
+--timeout 30
+--compact
+```
+
+Profile commands:
+
+```bash
+python -m backend.cli profiles list
+python -m backend.cli profiles create worker-1 --platform windows --screen-width 1920 --screen-height 1080
+python -m backend.cli profiles get <profile-id>
+python -m backend.cli profiles update <profile-id> --no-headless
+python -m backend.cli profiles launch <profile-id>
+python -m backend.cli profiles status <profile-id>
+python -m backend.cli profiles cdp <profile-id>
+python -m backend.cli profiles stop <profile-id>
+```
+
+Proxy commands:
+
+```bash
+python -m backend.cli proxies list
+python -m backend.cli proxies template > proxies.csv
+python -m backend.cli proxies import proxies.csv
+python -m backend.cli proxies create --protocol socks5 --host proxy.example.com --port 1080 --username user --password secret --region us --tags residential,automation
+```
+
+Task and scheduler commands:
+
+```bash
+python -m backend.cli tasks create --profile-id <profile-id> --authorized-target "internal test app" --task-type open_url --url https://example.com
+python -m backend.cli tasks list
+python -m backend.cli tasks cancel <task-id>
+python -m backend.cli runs list
+python -m backend.cli scheduler status
+python -m backend.cli scheduler tick
+```
+
+For advanced fields, pass `--json` with an inline JSON object or a JSON file path. Values from `--json` override matching flags.
+
+## HTTP API Overview
+
+Core endpoints:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/status` | Health/status summary. |
+| `GET` | `/api/profiles` | List profiles. |
+| `POST` | `/api/profiles` | Create profile. |
+| `GET` | `/api/profiles/{profile_id}` | Get profile. |
+| `PUT` | `/api/profiles/{profile_id}` | Update profile. |
+| `DELETE` | `/api/profiles/{profile_id}` | Delete stopped profile. |
+| `POST` | `/api/profiles/{profile_id}/launch` | Launch profile. |
+| `POST` | `/api/profiles/{profile_id}/stop` | Stop profile. |
+| `GET` | `/api/profiles/{profile_id}/status` | Runtime status. |
+| `GET` | `/api/profiles/{profile_id}/cdp` | CDP connection information. |
+| `WS` | `/api/profiles/{profile_id}/vnc` | VNC websocket proxy. |
+| `POST` | `/api/profiles/{profile_id}/clipboard` | Push clipboard text to a running profile. |
+| `GET` | `/api/proxies` | List proxy endpoints. |
+| `POST` | `/api/proxies` | Create proxy endpoint. |
+| `POST` | `/api/proxies/import` | Import proxy CSV. |
+| `POST` | `/api/config/import` | Import `/config` files. |
+| `GET` | `/api/tasks` | List scheduler tasks. |
+| `POST` | `/api/tasks` | Queue task. |
+| `POST` | `/api/tasks/{task_id}/cancel` | Cancel queued task. |
+| `GET` | `/api/runs` | List profile runs. |
+| `GET` | `/api/scheduler/status` | Scheduler status. |
+| `POST` | `/api/scheduler/tick` | Run one scheduler tick. |
+
+Example profile launch flow:
+
+```bash
+curl -X POST http://localhost:8080/api/profiles \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"worker-1","platform":"windows","headless":false}'
+
+curl -X POST http://localhost:8080/api/profiles/<profile-id>/launch
+
+curl http://localhost:8080/api/profiles/<profile-id>/cdp
+```
+
+Example task queue flow:
+
+```bash
+curl -X POST http://localhost:8080/api/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{"profile_id":"<profile-id>","authorized_target":"internal test app","task_type":"open_url","url":"https://example.com"}'
+
+curl http://localhost:8080/api/scheduler/status
+```
+
+## CDP Automation
+
+Every running profile exposes a Chrome DevTools Protocol endpoint through the manager. Use it with Playwright or Puppeteer while optionally watching the same browser session in the web UI through VNC.
 
 ```python
 from playwright.async_api import async_playwright
@@ -200,166 +287,90 @@ const page = browser.contexts()[0].pages()[0];
 await page.goto("https://example.com");
 ```
 
-The CDP URL is available in the toolbar (code icon) when a profile is running. The same browser session is accessible both visually through VNC and programmatically through the API.
+For a visible VNC session, create or update the profile with `headless=false`. A headless profile can still run and expose CDP, but VNC will not show a visible browser window.
 
-## Orchestration API
+## Scheduler Behavior
 
-This build includes a single-node orchestration layer on top of the existing profile launcher. It reuses the same persistent profiles, KasmVNC viewer, and CDP proxy used by the manual Launch button.
+The scheduler is intentionally small and local:
 
-## CLI Usage
-
-The backend includes a lightweight CLI that calls the same HTTP API as the web UI. Use it when you want to manage profiles, proxies, tasks, and launched browsers without opening the GUI.
-
-```bash
-# Run from the repository root while the Manager API is running
-python -m backend.cli status
-```
-
-Configure the target API and optional auth token with flags or environment variables:
-
-```bash
-export CLOAK_MANAGER_URL=http://localhost:8080
-export CLOAK_MANAGER_TOKEN=your-secret-token
-
-python -m backend.cli profiles list
-```
-
-Create and launch a fingerprinted browser profile from the CLI:
-
-```bash
-python -m backend.cli profiles create worker-1 \
-  --platform windows \
-  --proxy http://user:pass@proxy.example.com:8080 \
-  --timezone America/New_York \
-  --locale en-US \
-  --screen-width 1920 \
-  --screen-height 1080
-
-python -m backend.cli profiles launch <profile-id>
-python -m backend.cli profiles status <profile-id>
-python -m backend.cli profiles cdp <profile-id>
-python -m backend.cli profiles stop <profile-id>
-```
-
-Import or create proxies without using the GUI:
-
-```bash
-python -m backend.cli proxies template > proxies.csv
-python -m backend.cli proxies import proxies.csv
-
-python -m backend.cli proxies create \
-  --protocol socks5 \
-  --host proxy.example.com \
-  --port 1080 \
-  --username user \
-  --password secret \
-  --region us \
-  --tags residential,automation
-```
-
-Submit scheduler tasks and inspect runs:
-
-```bash
-python -m backend.cli tasks create \
-  --profile-id <profile-id> \
-  --authorized-target "internal test app" \
-  --task-type open_url \
-  --url https://example.com
-
-python -m backend.cli scheduler status
-python -m backend.cli scheduler tick
-python -m backend.cli tasks list
-python -m backend.cli runs list
-```
-
-For advanced fields, pass an extra JSON object inline or as a file with `--json`. Values in `--json` override matching CLI flags.
-
-Proxy endpoints can be imported from CSV with these columns:
-
-```csv
-protocol,host,port,username,password,region,tags
-http,proxy.example.com,8080,user,secret,us,residential
-```
-
-Core endpoints:
-
-```bash
-# List proxy endpoints
-curl http://localhost:8080/api/proxies
-
-# Import proxy CSV
-curl -X POST http://localhost:8080/api/proxies/import \
-  -H 'Content-Type: application/json' \
-  -d '{"csv":"protocol,host,port\nhttp,proxy.example.com,8080\n"}'
-
-# Enqueue an authorized URL-open task
-curl -X POST http://localhost:8080/api/tasks \
-  -H 'Content-Type: application/json' \
-  -d '{"profile_id":"<profile-id>","authorized_target":"internal test app","task_type":"open_url","url":"https://example.com"}'
-
-# Check scheduler status
-curl http://localhost:8080/api/scheduler/status
-```
-
-The scheduler runs automatically in the backend. Use `MAX_RUNNING_PROFILES` to control local concurrency and `SCHEDULER_INTERVAL_SECONDS` to control queue polling frequency.
-
-```bash
-# Run with three concurrent profiles and five-second queue polling
-docker run -p 8080:8080 \
-  -v cloakprofiles:/data \
-  -e MAX_RUNNING_PROFILES=3 \
-  -e SCHEDULER_INTERVAL_SECONDS=5 \
-  cloakbrowser-manager
-```
-
-## Remote Access
-
-The container binds to localhost only. To access from a remote server:
-
-```bash
-ssh -L 8080:localhost:8080 your-server
-```
-
-Then open `http://localhost:8080`.
+- It runs inside the FastAPI backend.
+- It polls queued tasks every `SCHEDULER_INTERVAL_SECONDS` seconds.
+- It starts at most `MAX_RUNNING_PROFILES` profiles concurrently.
+- It reuses `BrowserManager.launch(profile)` so VNC, CDP, display allocation, and persistent user data follow the same path as manual launches.
+- It can assign a proxy endpoint from the local proxy pool at runtime.
+- `open_url` tasks open a URL after launch.
+- `external_cdp` tasks reserve/start a profile for an external automation client to connect over CDP.
 
 ## Authentication
 
-By default, there is no authentication (ideal for local use). To protect the web UI and API when hosting on a network, set the `AUTH_TOKEN` environment variable:
-
-```bash
-docker run -p 8080:8080 -v cloakprofiles:/data -e AUTH_TOKEN=your-secret-token cloakhq/cloakbrowser-manager
-```
-
-Or in `docker-compose.yml`:
-
-```yaml
-environment:
-  - AUTH_TOKEN=your-secret-token
-```
+Authentication is disabled by default for local-only usage. Set `AUTH_TOKEN` to require login/API bearer auth.
 
 When `AUTH_TOKEN` is set:
 
-- The web UI shows a login page. Enter the token to unlock.
-- API consumers pass the token via `Authorization: Bearer <token>` header.
-- VNC WebSocket connections are authenticated via the login cookie.
-- The `/api/status` endpoint remains unauthenticated (for Docker healthcheck).
+- The web UI shows a login flow.
+- API clients must send `Authorization: Bearer <token>`.
+- VNC and CDP websocket routes require the same auth context.
+- `/api/status`, `/api/auth/status`, and `/api/auth/login` remain available for health/login flows.
 
-> **Note**: The auth token is transmitted in cleartext over HTTP. If you expose the Manager to the internet, put it behind a reverse proxy with HTTPS (Caddy, nginx, Traefik).
+If the service is exposed beyond localhost, terminate HTTPS in front of it and protect the deployment appropriately. The manager itself serves HTTP.
 
-## License
+## Development
 
-- **This application** (GUI source code) — MIT. See [LICENSE](LICENSE).
-- **CloakBrowser binary** (compiled Chromium) — free to use, no redistribution. See [BINARY-LICENSE.md](BINARY-LICENSE.md).
+Backend setup:
 
-The GUI application requires the CloakBrowser Chromium binary to function. The binary is automatically downloaded on first launch and is governed by its own license terms. If you fork or redistribute this application, your users must comply with the [CloakBrowser Binary License](BINARY-LICENSE.md).
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
+```
 
-## Contributing
+Frontend setup:
 
-Contributions are welcome. Please [open an issue](https://github.com/CloakHQ/CloakBrowser-Manager/issues) first to discuss what you'd like to change.
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-## Links
+Backend tests:
 
-- **CloakBrowser** — [github.com/CloakHQ/CloakBrowser](https://github.com/CloakHQ/CloakBrowser)
-- **Website** — [cloakbrowser.dev](https://cloakbrowser.dev)
-- **Bug reports** — [GitHub Issues](https://github.com/CloakHQ/CloakBrowser-Manager/issues)
-- **Contact** — cloakhq@pm.me
+```bash
+python -m pytest backend/tests
+```
+
+Frontend production build:
+
+```bash
+cd frontend
+npm run build
+```
+
+## Operational Notes
+
+- Store mutable runtime state in `/data`, not in the image.
+- Store desired bootstrap config in `/config`, mounted read-only when possible.
+- Do not put cookies, cache, localStorage, or browser profile state into `profiles.json`; those live under `/data/profiles/<profile-id>/`.
+- Keep `headless=false` for profiles that must be viewed through VNC.
+- Use `--compact` with the CLI when machine-readable one-line JSON output is preferred.
+- The Dockerfile sets a default `TARGETARCH=amd64` so classic `docker build` works even without BuildKit-provided platform args.
+
+## Requirements
+
+- Docker 20.10 or newer for the recommended runtime.
+- Around 2 GB of disk for image layers and browser binaries.
+- Enough memory for the backend plus each running Chromium profile.
+- Python 3.11+ for local backend development and tests.
+- Node.js 20+ for frontend development and production builds.
+
+## License And Runtime Dependency
+
+- Application source code: MIT, see [LICENSE](LICENSE).
+- CloakBrowser binary/runtime: governed separately, see [BINARY-LICENSE.md](BINARY-LICENSE.md).
+
+This application requires the CloakBrowser Chromium runtime to launch profiles. The binary may be downloaded by the runtime as needed and is governed by its own license terms.
+
+## Repository
+
+- Project repository: https://github.com/gscr10/cloakbrowser-orchestration-manager
+- CloakBrowser runtime project: https://github.com/CloakHQ/CloakBrowser
