@@ -134,3 +134,13 @@ def test_cli_imports_external_config(monkeypatch):
 
     assert code == 0
     assert FakeHttpClient.instances[0].requests == [("POST", "/api/config/import", None)]
+
+
+def test_cli_accepts_compact_after_subcommand(monkeypatch, capsys):
+    setup_fake_http(monkeypatch)
+    FakeHttpClient.next_response = FakeResponse(data={"ok": True})
+
+    code = cli.main(["status", "--compact"])
+
+    assert code == 0
+    assert capsys.readouterr().out == '{"ok": true}\n'

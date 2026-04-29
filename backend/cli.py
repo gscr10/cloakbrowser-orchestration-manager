@@ -369,7 +369,13 @@ def _add_task_commands(subparsers: argparse._SubParsersAction[argparse.ArgumentP
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    if argv is None:
+        argv = sys.argv[1:]
+    compact_output = "--compact" in argv
+    argv = [arg for arg in argv if arg != "--compact"]
     args = parser.parse_args(argv)
+    if compact_output:
+        args.compact = True
     client = ManagerClient(args.base_url, token=args.token, timeout=args.timeout)
     try:
         result = args.func(client, args)
