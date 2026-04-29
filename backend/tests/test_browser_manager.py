@@ -12,7 +12,9 @@ from backend.browser_manager import (
     _normalize_proxy,
     _validate_proxy,
     BrowserManager,
+    RunningProfile,
 )
+from backend.runtime_limits import max_running_profiles
 
 
 # ── _normalize_proxy ─────────────────────────────────────────────────────────
@@ -170,6 +172,42 @@ def test_launch_args_none_no_effect():
     base_count = len(args)
     args += profile.get("launch_args") or []
     assert len(args) == base_count
+
+
+# ── runtime limits ────────────────────────────────────────────────────────────
+
+
+def test_max_running_profiles_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("MAX_RUNNING_PROFILES", raising=False)
+    assert max_running_profiles() == 15
+
+
+def test_max_running_profiles_accepts_1_to_15(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MAX_RUNNING_PROFILES", "1")
+    assert max_running_profiles() == 1
+    monkeypatch.setenv("MAX_RUNNING_PROFILES", "15")
+    assert max_running_profiles() == 15
+
+
+def test_max_running_profiles_rejects_out_of_range(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MAX_RUNNING_PROFILES", "16")
+    with pytest.raises(ValueError, match="between 1 and 15"):
+        max_running_profiles()
+
+
+@pytest.mark.asyncio
+async def test_launch_rejects_when_running_limit_reached(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MAX_RUNNING_PROFILES", "1")
+    mgr = BrowserManager()
+    mgr.running["existing"] = RunningProfile(
+        profile_id="existing",
+        context=object(),
+        display=100,
+        ws_port=6100,
+        cdp_port=5100,
+    )
+    with pytest.raises(ValueError, match="Maximum running profiles reached: 1"):
+        await mgr.launch({"id": "next", "user_data_dir": "/tmp/next"})
 
 
 # ── _init_profile_defaults ───────────────────────────────────────────────────

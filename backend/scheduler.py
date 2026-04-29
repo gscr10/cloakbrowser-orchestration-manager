@@ -6,11 +6,11 @@ and persistent profile handling. It only adds queueing and proxy assignment.
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from . import database as db
 from .browser_manager import BrowserManager
+from .runtime_limits import max_running_profiles
 
 
 PROHIBITED_TERMS = (
@@ -25,10 +25,6 @@ PROHIBITED_TERMS = (
 
 class PolicyDenied(ValueError):
     """Raised when a submitted task does not meet local safety policy."""
-
-
-def max_running_profiles() -> int:
-    return int(os.environ.get("MAX_RUNNING_PROFILES", "3"))
 
 
 def submit_task(payload: dict[str, Any]) -> dict[str, Any]:

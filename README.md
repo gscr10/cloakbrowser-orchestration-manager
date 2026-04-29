@@ -70,7 +70,7 @@ docker run --shm-size=2g \
   -v ./config:/config:ro \
   -e CONFIG_IMPORT_ON_START=true \
   -e CONFIG_DIR=/config \
-  -e MAX_RUNNING_PROFILES=3 \
+  -e MAX_RUNNING_PROFILES=15 \
   -e SCHEDULER_INTERVAL_SECONDS=5 \
   cloakbrowser-orchestration-manager:local
 ```
@@ -107,7 +107,7 @@ docker compose up --build
 | `AUTH_TOKEN` | 未设置 | 可选 Bearer token 和 Web UI 登录 token。未设置时 API 和 UI 默认开放。 |
 | `CONFIG_DIR` | `/config` | 外部配置文件目录。 |
 | `CONFIG_IMPORT_ON_START` | `false` | 为 true 时启动阶段导入 `/config/profiles.json` 和 `/config/proxies.csv`。 |
-| `MAX_RUNNING_PROFILES` | `3` | 调度器使用的本地并发上限。 |
+| `MAX_RUNNING_PROFILES` | `15` | 单个服务允许同时运行的 Profile 上限，作用于 UI/API/CLI 手动启动和调度器启动，取值范围为 1-15。 |
 | `SCHEDULER_INTERVAL_SECONDS` | `5` | 后台调度器轮询间隔。 |
 
 Chromium 运行需要足够的共享内存，建议启动容器时使用 `--shm-size=2g`。
@@ -304,7 +304,7 @@ await page.goto("https://example.com");
 
 - 调度器运行在 FastAPI 后端进程中。
 - 每隔 `SCHEDULER_INTERVAL_SECONDS` 秒轮询排队任务。
-- 最多同时启动 `MAX_RUNNING_PROFILES` 个 Profile。
+- 最多同时启动 `MAX_RUNNING_PROFILES` 个 Profile，该限制同样适用于 UI/API/CLI 的手动启动。
 - 启动任务时复用 `BrowserManager.launch(profile)`，因此 VNC、CDP、display 分配和持久化用户数据都与手动启动保持一致。
 - 可以从本地代理池选择代理并注入到运行时 Profile。
 - `open_url` 任务会在启动后打开指定 URL。
@@ -363,6 +363,7 @@ npm run build
 - 需要通过 VNC 可视化的 Profile 应保持 `headless=false`。
 - CLI 需要机器可读的单行 JSON 输出时可使用 `--compact`。
 - Dockerfile 默认设置 `TARGETARCH=amd64`，因此即使使用经典 `docker build`，没有 BuildKit 注入平台参数时也能构建 KasmVNC 下载路径。
+- 每台 Linux 服务器可以用同一镜像独立运行一个控制单元，通过不同 `/config` 和 `MAX_RUNNING_PROFILES` 控制该节点的 Profile、代理和并发规模。
 
 ## 运行要求
 
