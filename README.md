@@ -100,6 +100,31 @@ docker compose up --build
 
 如果环境里只有旧版 `docker-compose`，并且遇到 Python 包兼容问题，可以改用上面的 `docker build` 和 `docker run` 命令。
 
+## GitHub Container Registry 镜像
+
+仓库包含 GitHub Actions 工作流。每次推送到 `main`，或推送 `v*` tag 时，GitHub 会自动构建 Docker 镜像并推送到 GHCR：
+
+```text
+ghcr.io/gscr10/cloakbrowser-orchestration-manager:latest
+```
+
+其他 Linux 服务器可以直接拉取镜像运行，不需要在每台服务器上重新 `docker build`：
+
+```bash
+docker pull ghcr.io/gscr10/cloakbrowser-orchestration-manager:latest
+
+docker run --shm-size=512m \
+  -p 8080:8080 \
+  -v cloak-manager-data:/data \
+  -v ./config:/config:ro \
+  -e CONFIG_IMPORT_ON_START=true \
+  -e CONFIG_DIR=/config \
+  -e MAX_RUNNING_PROFILES=auto \
+  ghcr.io/gscr10/cloakbrowser-orchestration-manager:latest
+```
+
+如果 GHCR package 设置为 private，需要先在服务器上执行 `docker login ghcr.io`。如果设置为 public，服务器可以直接拉取。
+
 ## 运行时环境变量
 
 | 变量 | 默认值 | 作用 |
