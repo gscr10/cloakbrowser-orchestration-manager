@@ -4,11 +4,11 @@ import { useProfiles } from "./hooks/useProfiles";
 import { api, setOnUnauthorized, type ProfileCreateData } from "./lib/api";
 import { ProfileList } from "./components/ProfileList";
 import { ProfileForm } from "./components/ProfileForm";
-import { ProfileViewer } from "./components/ProfileViewer";
 import { LaunchButton } from "./components/LaunchButton";
 import { StatusIndicator } from "./components/StatusIndicator";
 import { LoginPage } from "./components/LoginPage";
 import { OrchestrationPanel } from "./components/OrchestrationPanel";
+import { VncWorkspace } from "./components/VncWorkspace";
 
 type AuthState = "checking" | "required" | "ok" | "error";
 type View = "empty" | "create" | "edit" | "view";
@@ -94,15 +94,38 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<View>("empty");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [viewerIds, setViewerIds] = useState<string[]>([]);
+  const [activeViewerId, setActiveViewerId] = useState<string | null>(null);
 
   const selected = profiles.find((p) => p.id === selectedId) ?? null;
   const runningCount = profiles.filter((profile) => profile.status === "running").length;
 
+  const openViewer = useCallback((profileId: string) => {
+    setViewerIds((current) => current.includes(profileId) ? current : [...current, profileId]);
+    setActiveViewerId(profileId);
+    setView("view");
+  }, []);
+
+  useEffect(() => {
+    const runningIds = new Set(profiles.filter((profile) => profile.status === "running").map((profile) => profile.id));
+
+    setViewerIds((current) => current.filter((id) => runningIds.has(id)));
+    setActiveViewerId((current) => {
+      if (current && runningIds.has(current)) return current;
+      const nextViewer = viewerIds.filter((id) => runningIds.has(id));
+      return nextViewer.length > 0 ? (nextViewer[nextViewer.length - 1] ?? null) : null;
+    });
+  }, [profiles, viewerIds]);
+
   const handleSelect = useCallback((id: string) => {
     setSelectedId(id);
     const profile = profiles.find((p) => p.id === id);
-    setView(profile?.status === "running" ? "view" : "edit");
-  }, [profiles]);
+    if (profile?.status === "running") {
+      openViewer(id);
+      return;
+    }
+    setView("edit");
+  }, [openViewer, profiles]);
 
   const handleNew = useCallback(() => {
     setSelectedId(null);
@@ -125,6 +148,8 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
   const handleDelete = useCallback(async () => {
     if (!selectedId) return;
     await remove(selectedId);
+    setViewerIds((current) => current.filter((id) => id !== selectedId));
+    setActiveViewerId((current) => current === selectedId ? null : current);
     setSelectedId(null);
     setView("empty");
   }, [selectedId, remove]);
@@ -132,18 +157,50 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
   const handleLaunch = useCallback(async () => {
     if (!selectedId) return;
     const result = await launch(selectedId);
-    if (result) setView("view");
-  }, [selectedId, launch]);
+    if (result) openViewer(selectedId);
+  }, [selectedId, launch, openViewer]);
 
   const handleStop = useCallback(async () => {
     if (!selectedId) return;
     await stop(selectedId);
+    setViewerIds((current) => current.filter((id) => id !== selectedId));
+    setActiveViewerId((current) => current === selectedId ? null : current);
     setView("edit");
   }, [selectedId, stop]);
 
-  const handleVncDisconnect = useCallback(() => {
-    setView("edit");
+  const handleCloseViewer = useCallback((profileId: string) => {
+    setViewerIds((current) => {
+      const next = current.filter((id) => id !== profileId);
+      setActiveViewerId((active) => {
+        if (active !== profileId) return active;
+        return next.length > 0 ? (next[next.length - 1] ?? null) : null;
+      });
+      if (view === "view" && next.length === 0) {
+        setView("empty");
+      }
+      return next;
+    });
+  }, [view]);
+
+  const handleActivateViewer = useCallback((profileId: string) => {
+    setSelectedId(profileId);
+    setActiveViewerId(profileId);
+    setView("view");
   }, []);
+
+  const handleVncDisconnect = useCallback((profileId: string) => {
+    setViewerIds((current) => {
+      const next = current.filter((id) => id !== profileId);
+      setActiveViewerId((active) => active === profileId ? (next.length > 0 ? (next[next.length - 1] ?? null) : null) : active);
+      if (next.length === 0) {
+        setView("empty");
+      }
+      return next;
+    });
+  }, []);
+
+  const showEmptyState = view === "empty" && viewerIds.length === 0;
+  const showOrchestration = view !== "create" && view !== "edit";
 
   if (loading) {
     return (
@@ -248,7 +305,16 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
 
         <div className="flex-1 overflow-y-auto px-5 py-5">
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">
-            {view === "empty" && (
+            <VncWorkspace
+              profiles={profiles}
+              viewerIds={viewerIds}
+              activeViewerId={activeViewerId}
+              onActivate={handleActivateViewer}
+              onClose={handleCloseViewer}
+              onDisconnect={handleVncDisconnect}
+            />
+
+            {showEmptyState && (
               <div className="panel flex min-h-[320px] items-center justify-center rounded-[28px] p-8">
                 <div className="max-w-md text-center">
                   <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-sky-400/20 bg-sky-400/10 text-sky-300">
@@ -290,19 +356,7 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
               </div>
             )}
 
-            {view === "view" && selected && selected.status === "running" && (
-              <div className="overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/70 shadow-[0_18px_60px_rgba(15,23,42,0.45)]">
-                <ProfileViewer
-                  key={selected.id}
-                  profileId={selected.id}
-                  cdpUrl={selected.cdp_url}
-                  clipboardSync={selected.clipboard_sync}
-                  onDisconnect={handleVncDisconnect}
-                />
-              </div>
-            )}
-
-            {view !== "view" && <OrchestrationPanel profiles={profiles} />}
+            {showOrchestration && <OrchestrationPanel profiles={profiles} />}
           </div>
         </div>
       </div>
