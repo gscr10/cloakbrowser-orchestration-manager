@@ -208,6 +208,13 @@ def test_launch_block_reason_detects_memory_pressure(monkeypatch: pytest.MonkeyP
     assert "Insufficient memory headroom" in (launch_block_reason() or "")
 
 
+def test_launch_block_reason_can_be_disabled(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("DISABLE_RESOURCE_PRESSURE_CHECK", "true")
+    monkeypatch.setattr(runtime_limits, "_read_cgroup_memory_limit_mb", lambda: 4096)
+    monkeypatch.setattr(runtime_limits, "_read_cgroup_memory_current_mb", lambda: 4095)
+    assert launch_block_reason() is None
+
+
 def test_launch_block_reason_allows_memory_headroom(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(runtime_limits, "_read_cgroup_memory_limit_mb", lambda: 4096)
     monkeypatch.setattr(runtime_limits, "_read_cgroup_memory_current_mb", lambda: 1024)

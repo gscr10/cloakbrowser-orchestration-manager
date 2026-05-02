@@ -133,6 +133,7 @@ docker run --shm-size=512m \
 | `CONFIG_DIR` | `/config` | 外部配置文件目录。 |
 | `CONFIG_IMPORT_ON_START` | `false` | 为 true 时启动阶段导入 `/config/profiles.json` 和 `/config/proxies.csv`。 |
 | `MAX_RUNNING_PROFILES` | `auto` | 单个服务允许同时运行的 Profile 上限。默认自适应，硬上限为 15；也可以显式设置 1-15 的数字。该限制作用于 UI/API/CLI 手动启动和调度器启动。 |
+| `DISABLE_RESOURCE_PRESSURE_CHECK` | `false` | 为 `true` 时跳过启动前的内存和 CPU 压力检查，仅保留 `MAX_RUNNING_PROFILES` 数量限制。适合受限测试环境或手动排障，不建议常规生产默认开启。 |
 | `SCHEDULER_INTERVAL_SECONDS` | `5` | 后台调度器轮询间隔。 |
 
 Chromium 运行需要足够的共享内存，建议启动容器时至少使用 `--shm-size=512m`。如果单机并发较高或页面较重，可以按服务器资源提高到 `1g`、`2g` 或更大。

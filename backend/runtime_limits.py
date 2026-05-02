@@ -14,6 +14,11 @@ _MIN_FREE_MEMORY_RATIO = 0.08
 _MAX_LOAD_RATIO = 1.5
 
 
+def _resource_pressure_check_disabled() -> bool:
+    raw = os.environ.get("DISABLE_RESOURCE_PRESSURE_CHECK", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def max_running_profiles() -> int:
     """Return the configured per-service running profile limit.
 
@@ -39,6 +44,8 @@ def max_running_profiles() -> int:
 
 def launch_block_reason() -> str | None:
     """Return a resource pressure reason when launching should be delayed."""
+    if _resource_pressure_check_disabled():
+        return None
     memory_reason = _memory_pressure_reason()
     if memory_reason:
         return memory_reason
