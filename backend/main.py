@@ -1135,6 +1135,10 @@ async def cdp_page_proxy(websocket: WebSocket, profile_id: str, path: str):
 if FRONTEND_DIR.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
 
+    def _frontend_file_response(path: Path) -> FileResponse:
+        headers = {"Cache-Control": "no-store"} if path.suffix == ".html" else None
+        return FileResponse(path, headers=headers)
+
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         """Serve React SPA — all non-API routes return index.html."""
@@ -1142,5 +1146,5 @@ if FRONTEND_DIR.exists():
             raise HTTPException(status_code=404, detail="Not found")
         file_path = FRONTEND_DIR / full_path
         if full_path and file_path.exists() and file_path.is_file():
-            return FileResponse(file_path)
-        return FileResponse(FRONTEND_DIR / "index.html")
+            return _frontend_file_response(file_path)
+        return _frontend_file_response(FRONTEND_DIR / "index.html")

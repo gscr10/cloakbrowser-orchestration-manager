@@ -22,6 +22,12 @@ def test_list_profiles_empty(app_client: TestClient):
     assert resp.json() == []
 
 
+def test_spa_index_disables_html_cache(app_client: TestClient):
+    resp = app_client.get("/")
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-store"
+
+
 def test_create_profile(app_client: TestClient):
     resp = app_client.post("/api/profiles", json={"name": "Test"})
     assert resp.status_code == 201
