@@ -95,11 +95,36 @@ export function OrchestrationPanel({ profiles }: OrchestrationPanelProps) {
   };
 
   return (
-    <div className="border-t border-border bg-surface-0 p-4">
-      <div className="grid gap-4 lg:grid-cols-[1fr_1fr_1.2fr]">
-        <section className="rounded-lg border border-border bg-surface-1 p-4">
+    <div className="panel rounded-[28px] p-5">
+      <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Local Orchestration</h2>
+          <p className="mt-1 text-sm text-gray-400">
+            代理池、任务队列和调度器状态都放在一个轻量面板里，便于单机维护。
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-xs sm:min-w-[340px]">
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+            <div className="text-gray-500">Proxies</div>
+            <div className="mt-1 text-base font-semibold text-white">{proxies.length}</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+            <div className="text-gray-500">Queued</div>
+            <div className="mt-1 text-base font-semibold text-white">{status?.queued_count ?? 0}</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+            <div className="text-gray-500">Running</div>
+            <div className="mt-1 text-base font-semibold text-white">
+              {status ? `${status.running_count}/${status.max_running}` : "-"}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1fr_1fr_1.15fr]">
+        <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Proxy Pool</h2>
+            <h2 className="text-sm font-semibold text-white">Proxy Pool</h2>
             <span className="text-xs text-gray-500">{proxies.length} endpoints</span>
           </div>
           <textarea
@@ -111,9 +136,9 @@ export function OrchestrationPanel({ profiles }: OrchestrationPanelProps) {
             <Upload className="h-3.5 w-3.5" />
             Import CSV
           </button>
-          <div className="mt-3 max-h-28 overflow-y-auto text-xs text-gray-400">
+          <div className="mt-3 max-h-36 overflow-y-auto text-xs text-gray-400">
             {proxies.slice(0, 5).map((proxy) => (
-              <div key={proxy.id} className="flex justify-between border-t border-border py-1.5">
+              <div key={proxy.id} className="flex justify-between border-t border-white/10 py-2">
                 <span>{proxy.name}</span>
                 <span>{proxy.health}</span>
               </div>
@@ -121,9 +146,9 @@ export function OrchestrationPanel({ profiles }: OrchestrationPanelProps) {
           </div>
         </section>
 
-        <section className="rounded-lg border border-border bg-surface-1 p-4">
+        <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Task Queue</h2>
+            <h2 className="text-sm font-semibold text-white">Task Queue</h2>
             <span className="text-xs text-gray-500">{status?.queued_count ?? 0} queued</span>
           </div>
           <label className="label">Profile</label>
@@ -145,7 +170,7 @@ export function OrchestrationPanel({ profiles }: OrchestrationPanelProps) {
               <input className="input mb-3" value={url} onChange={(event) => setUrl(event.target.value)} />
             </>
           )}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button disabled={busy || !profiles.length} onClick={createTask} className="btn-primary flex items-center gap-1.5">
               <Plus className="h-3.5 w-3.5" />
               Enqueue
@@ -157,29 +182,31 @@ export function OrchestrationPanel({ profiles }: OrchestrationPanelProps) {
           </div>
         </section>
 
-        <section className="rounded-lg border border-border bg-surface-1 p-4">
+        <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Scheduler</h2>
+            <h2 className="text-sm font-semibold text-white">Scheduler</h2>
             <span className="flex items-center gap-1 text-xs text-gray-500">
               <Activity className="h-3.5 w-3.5" />
               {status ? `${status.running_count}/${status.max_running} running` : "loading"}
             </span>
           </div>
           {error && <div className="mb-3 rounded border border-red-600/30 bg-red-600/15 p-2 text-xs text-red-400">{error}</div>}
-          <div className="max-h-56 overflow-y-auto text-xs">
-            {tasks.length === 0 && <div className="text-gray-500">No tasks yet</div>}
+          <div className="max-h-64 overflow-y-auto text-xs">
+            {tasks.length === 0 && <div className="rounded-2xl border border-dashed border-white/10 px-3 py-6 text-center text-gray-500">No tasks yet</div>}
             {tasks.slice(0, 8).map((task) => (
-              <div key={task.id} className="border-t border-border py-2">
+              <div key={task.id} className="border-t border-white/10 py-3 first:border-t-0">
                 <div className="flex justify-between gap-3">
                   <span className="font-medium text-gray-200">{task.task_type}</span>
-                  <span className="text-gray-500">{task.status}</span>
+                  <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-400">
+                    {task.status}
+                  </span>
                 </div>
                 <div className="mt-1 truncate text-gray-500">{task.url || task.authorized_target}</div>
                 {task.failure_reason && <div className="mt-1 text-red-400">{task.failure_reason}</div>}
               </div>
             ))}
           </div>
-          <div className="mt-3 border-t border-border pt-3 text-xs text-gray-500">
+          <div className="mt-3 border-t border-white/10 pt-3 text-xs text-gray-500">
             {runs.length} recorded runs
           </div>
         </section>

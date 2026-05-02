@@ -170,39 +170,32 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
   };
 
   return (
-    <form onSubmit={handleSubmit} className="p-6 max-w-2xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold">
+    <form onSubmit={handleSubmit} className="mx-auto max-w-5xl p-4 sm:p-6">
+      <div className="mb-6 flex flex-col gap-4 rounded-[24px] border border-white/10 bg-white/[0.03] p-5 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-white">
             {isEdit ? "Edit Profile" : "New Profile"}
           </h2>
-          {isEdit && onDelete && (
-            <button
-              type="button"
-              onClick={handleDelete}
-              disabled={deleting}
-              className="btn-danger flex items-center gap-1.5"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span>{deleting ? "Deleting..." : "Delete"}</span>
-            </button>
-          )}
+          <p className="mt-1 text-sm text-gray-400">
+            {isEdit
+              ? "调整指纹、网络和启动参数，保存后立即生效到该 Profile 配置。"
+              : "先完成基础配置，再按需补充代理、硬件和行为参数。"}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={onCancel} className="btn-secondary">
-            Cancel
-          </button>
-          <button type="submit" disabled={saving} className="btn-primary flex items-center gap-1.5">
-            <Save className="h-3.5 w-3.5" />
-            <span>{saving ? "Saving..." : isEdit ? "Save" : "Create"}</span>
-          </button>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+          <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
+            {isEdit ? "Editing existing profile" : "Creating new profile"}
+          </span>
+          <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
+            Changes stay local until you save
+          </span>
         </div>
       </div>
 
       <div className="space-y-5">
         {/* Basic */}
-        <section>
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Basic</h3>
+        <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+          <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-sky-300/80">Basic</h3>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <label className="label">Profile Name</label>
@@ -273,8 +266,8 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
         </section>
 
         {/* Network */}
-        <section>
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Network</h3>
+        <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+          <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-sky-300/80">Network</h3>
           <div className="space-y-3">
             <div>
               <label className="label">Proxy</label>
@@ -318,8 +311,8 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
         </section>
 
         {/* Hardware */}
-        <section>
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Hardware</h3>
+        <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+          <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-sky-300/80">Hardware</h3>
           <div className="space-y-3">
             <div>
               <label className="label">Screen Resolution</label>
@@ -409,8 +402,8 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
         </section>
 
         {/* Behavior */}
-        <section>
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Behavior</h3>
+        <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+          <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-sky-300/80">Behavior</h3>
           <div className="space-y-3">
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
@@ -469,8 +462,8 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
         </section>
 
         {/* Tags */}
-        <section>
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Tags</h3>
+        <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+          <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-sky-300/80">Tags</h3>
           {(form.tags ?? []).length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-3">
               {(form.tags ?? []).map((t) => (
@@ -521,8 +514,8 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
         </section>
 
         {/* Launch Args */}
-        <section>
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Launch Args</h3>
+        <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+          <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-sky-300/80">Launch Args</h3>
           <p className="text-xs text-gray-500 mb-2">Custom Chromium flags passed at launch (e.g. --load-extension, --disable-features)</p>
           {(form.launch_args ?? []).length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-3">
@@ -558,8 +551,8 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
         </section>
 
         {/* Notes */}
-        <section>
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Notes</h3>
+        <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+          <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-sky-300/80">Notes</h3>
           <textarea
             className="input min-h-[80px] resize-y"
             value={form.notes ?? ""}
@@ -567,6 +560,36 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
             placeholder="Optional notes about this profile..."
           />
         </section>
+
+        <div className="sticky bottom-4 z-10 rounded-[24px] border border-white/10 bg-slate-950/85 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.45)] backdrop-blur">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-xs text-gray-400">
+              {isEdit
+                ? "确认无误后保存。删除会同时清理该 Profile 的浏览器数据。"
+                : "创建后即可回到列表继续编辑，或直接启动浏览器。"}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              {isEdit && onDelete && (
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="btn-danger flex items-center gap-1.5"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>{deleting ? "Deleting..." : "Delete"}</span>
+                </button>
+              )}
+              <button type="button" onClick={onCancel} className="btn-secondary">
+                Cancel
+              </button>
+              <button type="submit" disabled={saving} className="btn-primary flex items-center gap-1.5">
+                <Save className="h-3.5 w-3.5" />
+                <span>{saving ? "Saving..." : isEdit ? "Save" : "Create"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
     </form>

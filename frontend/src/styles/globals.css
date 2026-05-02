@@ -13,6 +13,12 @@
       system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    background: #0a0f1f;
+    color: #e5e7eb;
+  }
+
+  #root {
+    min-height: 100vh;
   }
 
   /* Scrollbar styling */
@@ -43,24 +49,27 @@
 
 @layer components {
   .btn {
-    @apply px-3 py-1.5 rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-accent/50;
+    @apply rounded-xl px-3.5 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-accent/50;
   }
   .btn-primary {
-    @apply btn bg-accent text-white hover:bg-accent-hover;
+    @apply btn bg-accent text-white shadow-[0_10px_30px_rgba(14,165,233,0.22)] hover:bg-accent-hover;
   }
   .btn-secondary {
-    @apply btn bg-surface-3 text-gray-200 hover:bg-surface-4;
+    @apply btn border border-white/10 bg-white/5 text-gray-200 hover:bg-white/10;
   }
   .btn-danger {
-    @apply btn bg-red-600/20 text-red-400 hover:bg-red-600/30;
+    @apply btn border border-red-500/20 bg-red-600/20 text-red-300 hover:bg-red-600/30;
   }
   .input {
-    @apply w-full h-9 bg-surface-2 border border-border rounded-md px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50;
+    @apply h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/50;
   }
   textarea.input {
     @apply h-auto;
   }
   .label {
     @apply block text-xs font-medium text-gray-400 mb-1;
+  }
+  .panel {
+    @apply border border-white/10 bg-slate-950/55 shadow-[0_18px_60px_rgba(15,23,42,0.4)] backdrop-blur;
   }
 }

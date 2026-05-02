@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Lock, PanelLeftClose, PanelLeft } from "lucide-react";
+import { Lock, PanelLeftClose, PanelLeft, Plus, Sparkles } from "lucide-react";
 import { useProfiles } from "./hooks/useProfiles";
 import { api, setOnUnauthorized, type ProfileCreateData } from "./lib/api";
 import { ProfileList } from "./components/ProfileList";
@@ -39,17 +39,17 @@ export default function App() {
 
   if (authState === "checking") {
     return (
-      <div className="h-screen flex items-center justify-center">
-        <div className="text-gray-500 text-sm">Loading...</div>
+      <div className="flex h-screen items-center justify-center bg-[#0a0f1f] text-gray-300">
+        <div className="text-sm text-gray-500">Loading...</div>
       </div>
     );
   }
 
   if (authState === "error") {
     return (
-      <div className="h-screen flex items-center justify-center bg-surface-0">
-        <div className="text-center">
-          <p className="text-red-400 text-sm mb-2">Unable to reach the server</p>
+      <div className="flex h-screen items-center justify-center bg-[#0a0f1f] px-6">
+        <div className="panel max-w-sm rounded-3xl p-8 text-center">
+          <p className="mb-2 text-sm text-red-300">Unable to reach the server</p>
           <button
             onClick={() => {
               setAuthState("checking");
@@ -60,7 +60,7 @@ export default function App() {
                 })
                 .catch(() => setAuthState("error"));
             }}
-            className="text-xs text-gray-400 hover:text-gray-200 underline"
+            className="text-xs text-gray-400 underline hover:text-gray-200"
           >
             Retry
           </button>
@@ -96,6 +96,7 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const selected = profiles.find((p) => p.id === selectedId) ?? null;
+  const runningCount = profiles.filter((profile) => profile.status === "running").length;
 
   const handleSelect = useCallback((id: string) => {
     setSelectedId(id);
@@ -146,17 +147,16 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
 
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center">
-        <div className="text-gray-500 text-sm">Loading...</div>
+      <div className="flex h-screen items-center justify-center bg-[#0a0f1f] text-gray-300">
+        <div className="text-sm text-gray-500">Loading...</div>
       </div>
     );
   }
 
   return (
-    <div className="h-screen flex">
-      {/* Sidebar */}
+    <div className="flex min-h-screen bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.14),_transparent_32%),linear-gradient(180deg,#0a0f1f_0%,#0f172a_100%)] text-gray-100">
       {sidebarOpen && (
-        <div className="w-64 border-r border-border bg-surface-1 flex-shrink-0">
+        <div className="w-80 shrink-0 border-r border-white/10 bg-slate-950/55 backdrop-blur">
           <ProfileList
             profiles={profiles}
             selectedId={selectedId}
@@ -166,94 +166,144 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
         </div>
       )}
 
-      {/* Main panel */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Top bar */}
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface-1">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="text-gray-500 hover:text-gray-300 p-1"
-              title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-            >
-              {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
-            </button>
-            {selected && (
-              <div className="flex items-center gap-2">
-                <StatusIndicator status={selected.status} size="md" />
-                <span className="text-sm font-medium">{selected.name}</span>
-                <span className="text-xs text-gray-500 capitalize">{selected.platform}</span>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {selected && (
-              <LaunchButton
-                status={selected.status}
-                onLaunch={handleLaunch}
-                onStop={handleStop}
-              />
-            )}
-            {authRequired && (
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="border-b border-white/10 bg-slate-950/35 px-5 py-4 backdrop-blur">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-start gap-3">
               <button
-                onClick={onLogout}
-                className="text-gray-500 hover:text-gray-300 p-1"
-                title="Log out"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="mt-0.5 rounded-lg border border-white/10 bg-white/5 p-2 text-gray-400 transition hover:bg-white/10 hover:text-gray-100"
+                title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
               >
-                <Lock className="h-3.5 w-3.5" />
+                {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
               </button>
-            )}
+              <div>
+                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-sky-300/80">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Profile Workspace
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-3">
+                  <h1 className="text-xl font-semibold tracking-tight text-white">CloakBrowser Manager</h1>
+                  <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-xs font-medium text-emerald-300">
+                    {runningCount} running
+                  </span>
+                  <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-gray-300">
+                    {profiles.length} profiles
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-gray-400">
+                  在一个视图里管理配置、启动状态和本地编排任务。
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              {selected && (
+                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2">
+                  <div className="flex items-center gap-2">
+                    <StatusIndicator status={selected.status} size="md" />
+                    <span className="text-sm font-medium text-white">{selected.name}</span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-gray-400">
+                    <span className="capitalize">{selected.platform}</span>
+                    {selected.proxy && <span>Proxy enabled</span>}
+                    {selected.headless && <span>Headless</span>}
+                  </div>
+                </div>
+              )}
+
+              {!selected && (
+                <button onClick={handleNew} className="btn-secondary flex items-center gap-1.5">
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>New Profile</span>
+                </button>
+              )}
+
+              {selected && (
+                <LaunchButton
+                  status={selected.status}
+                  onLaunch={handleLaunch}
+                  onStop={handleStop}
+                />
+              )}
+
+              {authRequired && (
+                <button
+                  onClick={onLogout}
+                  className="rounded-lg border border-white/10 bg-white/5 p-2 text-gray-400 transition hover:bg-white/10 hover:text-white"
+                  title="Log out"
+                >
+                  <Lock className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Error banner */}
         {error && (
-          <div className="px-4 py-2 bg-red-600/15 border-b border-red-600/30 text-red-400 text-sm">
+          <div className="mx-5 mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 shadow-[0_12px_30px_rgba(127,29,29,0.18)]">
             {error}
           </div>
         )}
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto">
-          {view === "empty" && (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <p className="text-gray-500 text-sm">Select a profile or create a new one</p>
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">
+            {view === "empty" && (
+              <div className="panel flex min-h-[320px] items-center justify-center rounded-[28px] p-8">
+                <div className="max-w-md text-center">
+                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-sky-400/20 bg-sky-400/10 text-sky-300">
+                    <Sparkles className="h-6 w-6" />
+                  </div>
+                  <h2 className="text-xl font-semibold text-white">先选一个 Profile，或者新建一个</h2>
+                  <p className="mt-2 text-sm leading-6 text-gray-400">
+                    左侧列表负责快速切换，右侧区域负责编辑配置、启动浏览器以及查看 VNC 会话。
+                  </p>
+                  <button onClick={handleNew} className="btn-primary mt-5 inline-flex items-center gap-1.5">
+                    <Plus className="h-4 w-4" />
+                    <span>Create Profile</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {view === "create" && (
-            <ProfileForm
-              profile={null}
-              onSave={handleCreate}
-              onCancel={() => setView("empty")}
-            />
-          )}
+            {view === "create" && (
+              <div className="panel rounded-[28px] p-2 sm:p-4">
+                <ProfileForm
+                  profile={null}
+                  onSave={handleCreate}
+                  onCancel={() => setView("empty")}
+                />
+              </div>
+            )}
 
-          {view === "edit" && selected && (
-            <ProfileForm
-              profile={selected}
-              onSave={handleUpdate}
-              onDelete={handleDelete}
-              onCancel={() => {
-                setSelectedId(null);
-                setView("empty");
-              }}
-            />
-          )}
+            {view === "edit" && selected && (
+              <div className="panel rounded-[28px] p-2 sm:p-4">
+                <ProfileForm
+                  profile={selected}
+                  onSave={handleUpdate}
+                  onDelete={handleDelete}
+                  onCancel={() => {
+                    setSelectedId(null);
+                    setView("empty");
+                  }}
+                />
+              </div>
+            )}
 
-          {view === "view" && selected && selected.status === "running" && (
-            <ProfileViewer
-              key={selected.id}
-              profileId={selected.id}
-              cdpUrl={selected.cdp_url}
-              clipboardSync={selected.clipboard_sync}
-              onDisconnect={handleVncDisconnect}
-            />
-          )}
+            {view === "view" && selected && selected.status === "running" && (
+              <div className="overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/70 shadow-[0_18px_60px_rgba(15,23,42,0.45)]">
+                <ProfileViewer
+                  key={selected.id}
+                  profileId={selected.id}
+                  cdpUrl={selected.cdp_url}
+                  clipboardSync={selected.clipboard_sync}
+                  onDisconnect={handleVncDisconnect}
+                />
+              </div>
+            )}
 
-          {view !== "view" && <OrchestrationPanel profiles={profiles} />}
+            {view !== "view" && <OrchestrationPanel profiles={profiles} />}
+          </div>
         </div>
       </div>
     </div>
