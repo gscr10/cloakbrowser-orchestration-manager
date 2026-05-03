@@ -65,13 +65,17 @@ export function OrchestrationPanel({ profiles }: OrchestrationPanelProps) {
 
   const createTask = async () => {
     if (!profileId || !authorizedTarget.trim()) return;
+    if (taskType === "open_url" && !url.trim()) {
+      setError("URL is required for open_url tasks");
+      return;
+    }
     setBusy(true);
     try {
       await api.createTask({
         profile_id: profileId,
         authorized_target: authorizedTarget,
         task_type: taskType,
-        url: taskType === "open_url" ? url : null,
+        url: taskType === "open_url" ? url.trim() : null,
         timeout_seconds: 300,
       });
       await refresh();

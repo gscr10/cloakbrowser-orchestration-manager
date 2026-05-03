@@ -57,7 +57,9 @@ export function useProfiles() {
         await api.deleteProfile(id);
         setProfiles((prev) => prev.filter((p) => p.id !== id));
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to delete profile");
+        const nextError = err instanceof Error ? err.message : "Failed to delete profile";
+        setError(nextError);
+        throw err instanceof Error ? err : new Error(nextError);
       }
     },
     [],
@@ -82,7 +84,9 @@ export function useProfiles() {
         await api.stopProfile(id);
         await refresh();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to stop profile");
+        const nextError = err instanceof Error ? err.message : "Failed to stop profile";
+        setError(nextError);
+        throw err instanceof Error ? err : new Error(nextError);
       }
     },
     [refresh],

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ProfileCreate(BaseModel):
@@ -183,6 +183,14 @@ class TaskCreate(BaseModel):
         if not value.strip():
             raise ValueError("authorized_target is required")
         return value.strip()
+
+    @model_validator(mode="after")
+    def require_url_for_open_url(self) -> "TaskCreate":
+        if self.task_type == "open_url":
+            if not self.url or not self.url.strip():
+                raise ValueError("url is required when task_type is open_url")
+            self.url = self.url.strip()
+        return self
 
 
 class TaskResponse(BaseModel):

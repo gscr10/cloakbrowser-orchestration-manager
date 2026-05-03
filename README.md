@@ -10,7 +10,7 @@
 - Profile 启动、停止、状态查询 API，复用 CloakBrowser 生命周期、KasmVNC 显示和 CDP 代理。
 - Web UI 支持手动管理 Profile，并通过 VNC 查看运行中的浏览器。
 - HTTP API 覆盖 profiles、proxy endpoints、config import、scheduler tasks、runs、auth、VNC、clipboard 和 CDP。
-- CLI 客户端 `python -m backend.cli`，可在不打开 GUI 的情况下管理服务。
+- CLI 客户端 `python3 -m backend.cli`，可在不打开 GUI 的情况下管理服务。
 - Docker 运行时支持挂载 `/config/profiles.json` 和 `/config/proxies.csv` 进行外部配置导入。
 - SQLite 本地存储位于 `/data`，保存 Profile、代理元数据、任务、运行记录和浏览器会话状态。
 - 单机调度器按本地并发上限启动队列中的授权任务。
@@ -47,7 +47,7 @@ React UI / CLI / external client
 
 ```text
 /data
-/data/manager.db
+/data/profiles.db
 /data/profiles/<profile-id>/
 /config/profiles.json
 /config/proxies.csv
@@ -180,7 +180,7 @@ http,proxy.example.com,8080,user,secret,us,residential
 可以在启动时通过 `CONFIG_IMPORT_ON_START=true` 导入配置，也可以在服务运行中手动触发：
 
 ```bash
-python -m backend.cli config import
+python3 -m backend.cli config import
 ```
 
 导入逻辑对 Profile 按 `name` 幂等处理。代理导入会跳过协议、host、port、username 相同的重复记录。
@@ -190,7 +190,7 @@ python -m backend.cli config import
 CLI 是后端 HTTP API 的轻量客户端，和 Web UI 使用同一套服务接口。
 
 ```bash
-python -m backend.cli status
+python3 -m backend.cli status
 ```
 
 通过参数或环境变量指定目标服务：
@@ -199,7 +199,7 @@ python -m backend.cli status
 export CLOAK_MANAGER_URL=http://localhost:8080
 export CLOAK_MANAGER_TOKEN=your-secret-token
 
-python -m backend.cli profiles list
+python3 -m backend.cli profiles list
 ```
 
 全局参数：
@@ -214,34 +214,34 @@ python -m backend.cli profiles list
 Profile 管理命令：
 
 ```bash
-python -m backend.cli profiles list
-python -m backend.cli profiles create worker-1 --platform windows --screen-width 1920 --screen-height 1080
-python -m backend.cli profiles get <profile-id>
-python -m backend.cli profiles update <profile-id> --no-headless
-python -m backend.cli profiles launch <profile-id>
-python -m backend.cli profiles status <profile-id>
-python -m backend.cli profiles cdp <profile-id>
-python -m backend.cli profiles stop <profile-id>
+python3 -m backend.cli profiles list
+python3 -m backend.cli profiles create worker-1 --platform windows --screen-width 1920 --screen-height 1080
+python3 -m backend.cli profiles get <profile-id>
+python3 -m backend.cli profiles update <profile-id> --no-headless
+python3 -m backend.cli profiles launch <profile-id>
+python3 -m backend.cli profiles status <profile-id>
+python3 -m backend.cli profiles cdp <profile-id>
+python3 -m backend.cli profiles stop <profile-id>
 ```
 
 代理管理命令：
 
 ```bash
-python -m backend.cli proxies list
-python -m backend.cli proxies template > proxies.csv
-python -m backend.cli proxies import proxies.csv
-python -m backend.cli proxies create --protocol socks5 --host proxy.example.com --port 1080 --username user --password secret --region us --tags residential,automation
+python3 -m backend.cli proxies list
+python3 -m backend.cli proxies template > proxies.csv
+python3 -m backend.cli proxies import proxies.csv
+python3 -m backend.cli proxies create --protocol socks5 --host proxy.example.com --port 1080 --username user --password secret --region us --tags residential,automation
 ```
 
 任务和调度命令：
 
 ```bash
-python -m backend.cli tasks create --profile-id <profile-id> --authorized-target "internal test app" --task-type open_url --url https://example.com
-python -m backend.cli tasks list
-python -m backend.cli tasks cancel <task-id>
-python -m backend.cli runs list
-python -m backend.cli scheduler status
-python -m backend.cli scheduler tick
+python3 -m backend.cli tasks create --profile-id <profile-id> --authorized-target "internal test app" --task-type open_url --url https://example.com
+python3 -m backend.cli tasks list
+python3 -m backend.cli tasks cancel <task-id>
+python3 -m backend.cli runs list
+python3 -m backend.cli scheduler status
+python3 -m backend.cli scheduler tick
 ```
 
 高级字段可以通过 `--json` 传入内联 JSON 对象或 JSON 文件路径。`--json` 中的值会覆盖同名命令行参数。
@@ -257,7 +257,7 @@ python -m backend.cli scheduler tick
 | `POST` | `/api/profiles` | 创建 Profile。 |
 | `GET` | `/api/profiles/{profile_id}` | 查询 Profile。 |
 | `PUT` | `/api/profiles/{profile_id}` | 更新 Profile。 |
-| `DELETE` | `/api/profiles/{profile_id}` | 删除已停止的 Profile。 |
+| `DELETE` | `/api/profiles/{profile_id}` | 删除 Profile；若仍在运行会先自动停止。 |
 | `POST` | `/api/profiles/{profile_id}/launch` | 启动 Profile。 |
 | `POST` | `/api/profiles/{profile_id}/stop` | 停止 Profile。 |
 | `GET` | `/api/profiles/{profile_id}/status` | 查询运行状态。 |
@@ -354,10 +354,10 @@ await page.goto("https://example.com");
 后端开发环境：
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
+python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
 ```
 
 前端开发环境：
@@ -371,7 +371,7 @@ npm run dev
 后端测试：
 
 ```bash
-python -m pytest backend/tests
+python3 -m pytest backend/tests
 ```
 
 前端生产构建：

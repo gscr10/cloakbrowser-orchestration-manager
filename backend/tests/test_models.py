@@ -11,6 +11,7 @@ from backend.models import (
     ProfileStatusResponse,
     ProfileUpdate,
     StatusResponse,
+    TaskCreate,
     TagCreate,
     TagResponse,
 )
@@ -109,6 +110,29 @@ def test_profile_update_exclude_unset():
 def test_profile_update_invalid_platform():
     with pytest.raises(ValidationError):
         ProfileUpdate(platform="android")
+
+
+# ── TaskCreate ────────────────────────────────────────────────────────────────
+
+
+def test_task_create_open_url_requires_url():
+    with pytest.raises(ValidationError, match="url is required when task_type is open_url"):
+        TaskCreate(profile_id="p1", authorized_target="internal test app", task_type="open_url")
+
+
+def test_task_create_open_url_trims_url():
+    task = TaskCreate(
+        profile_id="p1",
+        authorized_target="internal test app",
+        task_type="open_url",
+        url="  https://example.com  ",
+    )
+    assert task.url == "https://example.com"
+
+
+def test_task_create_external_cdp_allows_missing_url():
+    task = TaskCreate(profile_id="p1", authorized_target="internal test app", task_type="external_cdp")
+    assert task.url is None
 
 
 # ── TagCreate ────────────────────────────────────────────────────────────────

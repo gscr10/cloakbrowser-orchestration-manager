@@ -136,6 +136,21 @@ def test_cli_imports_external_config(monkeypatch):
     assert FakeHttpClient.instances[0].requests == [("POST", "/api/config/import", None)]
 
 
+def test_cli_rejects_open_url_without_url(monkeypatch, capsys):
+    setup_fake_http(monkeypatch)
+
+    code = cli.main([
+        "tasks", "create",
+        "--profile-id", "profile-1",
+        "--authorized-target", "internal test app",
+        "--task-type", "open_url",
+    ])
+
+    assert code == 1
+    assert "--url is required when --task-type open_url" in capsys.readouterr().err
+    assert FakeHttpClient.instances[0].requests == []
+
+
 def test_cli_accepts_compact_after_subcommand(monkeypatch, capsys):
     setup_fake_http(monkeypatch)
     FakeHttpClient.next_response = FakeResponse(data={"ok": True})

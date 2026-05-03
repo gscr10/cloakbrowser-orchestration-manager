@@ -126,4 +126,32 @@ describe("useProfiles", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.error).toBe("Network error");
   });
+
+  it("remove throws and keeps local state on delete failure", async () => {
+    mockApi.deleteProfile.mockRejectedValue(new Error("Delete failed"));
+
+    const { result } = renderHook(() => useProfiles());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await expect(result.current.remove("abc-123")).rejects.toThrow("Delete failed");
+    });
+
+    await waitFor(() => expect(result.current.error).toBe("Delete failed"));
+    expect(result.current.profiles).toEqual([fakeProfile]);
+  });
+
+  it("stop throws and keeps current state on stop failure", async () => {
+    mockApi.stopProfile.mockRejectedValue(new Error("Stop failed"));
+
+    const { result } = renderHook(() => useProfiles());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await expect(result.current.stop("abc-123")).rejects.toThrow("Stop failed");
+    });
+
+    await waitFor(() => expect(result.current.error).toBe("Stop failed"));
+    expect(result.current.profiles).toEqual([fakeProfile]);
+  });
 });
