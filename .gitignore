@@ -25,3 +25,8 @@ CLAUDE.md
 publish-docker.sh
 .beads
 debug
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
