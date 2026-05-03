@@ -237,6 +237,9 @@ python3 -m backend.cli proxies create --protocol socks5 --host proxy.example.com
 
 ```bash
 python3 -m backend.cli tasks create --profile-id <profile-id> --authorized-target "internal test app" --task-type open_url --url https://example.com
+
+# 如果省略 --url，服务端会默认打开 https://www.baidu.com
+python3 -m backend.cli tasks create --profile-id <profile-id> --authorized-target "internal test app" --task-type open_url
 python3 -m backend.cli tasks list
 python3 -m backend.cli tasks cancel <task-id>
 python3 -m backend.cli runs list
@@ -333,7 +336,7 @@ await page.goto("https://example.com");
 - 默认最多同时启动 15 个 Profile，但每次启动前都会检查容器可见的内存余量和 CPU 压力；资源压力过高时会拒绝继续启动。该限制同样适用于 UI/API/CLI 的手动启动。
 - 启动任务时复用 `BrowserManager.launch(profile)`，因此 VNC、CDP、display 分配和持久化用户数据都与手动启动保持一致。
 - 可以从本地代理池选择代理并注入到运行时 Profile。
-- `open_url` 任务会在启动后打开指定 URL。
+- `open_url` 任务会在启动后打开指定 URL；如果未提供 `url`，默认打开 `https://www.baidu.com`。
 - `external_cdp` 任务用于启动 Profile，供外部自动化客户端通过 CDP 接入。
 
 ## 认证

@@ -185,9 +185,6 @@ def cmd_tasks_list(client: ManagerClient, _args: argparse.Namespace) -> Any:
 
 
 def cmd_tasks_create(client: ManagerClient, args: argparse.Namespace) -> Any:
-    if args.task_type == "open_url" and not (args.url or "").strip():
-        raise argparse.ArgumentTypeError("--url is required when --task-type open_url")
-
     payload = {
         "profile_id": args.profile_id,
         "authorized_target": args.authorized_target,

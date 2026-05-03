@@ -7,6 +7,7 @@ interface OrchestrationPanelProps {
 }
 
 const EMPTY_PROXY_CSV = "protocol,host,port,username,password,region,tags\nhttp,127.0.0.1,8080,,,,local";
+const DEFAULT_OPEN_URL_PLACEHOLDER = "https://www.baidu.com";
 
 export function OrchestrationPanel({ profiles }: OrchestrationPanelProps) {
   const [proxies, setProxies] = useState<ProxyEndpoint[]>([]);
@@ -18,7 +19,7 @@ export function OrchestrationPanel({ profiles }: OrchestrationPanelProps) {
   const [profileId, setProfileId] = useState("");
   const [authorizedTarget, setAuthorizedTarget] = useState("internal test app");
   const [taskType, setTaskType] = useState<"open_url" | "external_cdp">("open_url");
-  const [url, setUrl] = useState("https://example.com");
+  const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -65,17 +66,13 @@ export function OrchestrationPanel({ profiles }: OrchestrationPanelProps) {
 
   const createTask = async () => {
     if (!profileId || !authorizedTarget.trim()) return;
-    if (taskType === "open_url" && !url.trim()) {
-      setError("URL is required for open_url tasks");
-      return;
-    }
     setBusy(true);
     try {
       await api.createTask({
         profile_id: profileId,
         authorized_target: authorizedTarget,
         task_type: taskType,
-        url: taskType === "open_url" ? url.trim() : null,
+        url: taskType === "open_url" ? (url.trim() || null) : null,
         timeout_seconds: 300,
       });
       await refresh();
@@ -171,7 +168,13 @@ export function OrchestrationPanel({ profiles }: OrchestrationPanelProps) {
           {taskType === "open_url" && (
             <>
               <label className="label">URL</label>
-              <input className="input mb-3" value={url} onChange={(event) => setUrl(event.target.value)} />
+              <input
+                className="input mb-1"
+                value={url}
+                placeholder={DEFAULT_OPEN_URL_PLACEHOLDER}
+                onChange={(event) => setUrl(event.target.value)}
+              />
+              <p className="mb-3 text-xs text-gray-500">留空时默认打开 {DEFAULT_OPEN_URL_PLACEHOLDER}</p>
             </>
           )}
           <div className="flex flex-wrap gap-2">

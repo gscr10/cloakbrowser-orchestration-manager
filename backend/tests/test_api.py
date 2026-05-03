@@ -262,14 +262,15 @@ def test_create_cancel_and_list_task(app_client: TestClient):
     assert listed.json()[0]["id"] == task["id"]
 
 
-def test_create_open_url_task_requires_url(app_client: TestClient):
+def test_create_open_url_task_defaults_url(app_client: TestClient):
     profile = app_client.post("/api/profiles", json={"name": "Queued"}).json()
     resp = app_client.post("/api/tasks", json={
         "profile_id": profile["id"],
         "authorized_target": "internal test app",
         "task_type": "open_url",
     })
-    assert resp.status_code == 422
+    assert resp.status_code == 201
+    assert resp.json()["url"] == "https://www.baidu.com"
 
 
 def test_scheduler_tick_launches_queued_task(app_client: TestClient):

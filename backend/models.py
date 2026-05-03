@@ -188,8 +188,9 @@ class TaskCreate(BaseModel):
     def require_url_for_open_url(self) -> "TaskCreate":
         if self.task_type == "open_url":
             if not self.url or not self.url.strip():
-                raise ValueError("url is required when task_type is open_url")
-            self.url = self.url.strip()
+                self.url = "https://www.baidu.com"
+            else:
+                self.url = self.url.strip()
         return self
 
 

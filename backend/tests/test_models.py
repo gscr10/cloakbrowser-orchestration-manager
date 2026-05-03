@@ -115,9 +115,19 @@ def test_profile_update_invalid_platform():
 # ── TaskCreate ────────────────────────────────────────────────────────────────
 
 
-def test_task_create_open_url_requires_url():
-    with pytest.raises(ValidationError, match="url is required when task_type is open_url"):
-        TaskCreate(profile_id="p1", authorized_target="internal test app", task_type="open_url")
+def test_task_create_open_url_defaults_url_when_missing():
+    task = TaskCreate(profile_id="p1", authorized_target="internal test app", task_type="open_url")
+    assert task.url == "https://www.baidu.com"
+
+
+def test_task_create_open_url_defaults_url_when_blank():
+    task = TaskCreate(
+        profile_id="p1",
+        authorized_target="internal test app",
+        task_type="open_url",
+        url="   ",
+    )
+    assert task.url == "https://www.baidu.com"
 
 
 def test_task_create_open_url_trims_url():
