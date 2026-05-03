@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ClipboardCopy, Code2, Maximize2, Minimize2 } from "lucide-react";
 import { api } from "../lib/api";
 
@@ -6,7 +6,7 @@ interface ProfileViewerProps {
   profileId: string;
   cdpUrl: string | null;
   clipboardSync: boolean;
-  onDisconnect: () => void;
+  onDisconnect: (profileId: string) => void;
 }
 
 // X11 keysym for V key (Ctrl is already held in VNC by the time we intercept)
@@ -15,11 +15,41 @@ const XK_v = 0x0076;
 export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboardSync, onDisconnect }: ProfileViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<any>(null);
+  const resizeFrameRef = useRef<number | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [clipboardSync, setClipboardSync] = useState(initialClipboardSync);
   const [cdpCopied, setCdpCopied] = useState(false);
+
+  const scheduleViewportRefresh = useCallback(() => {
+    const run = () => {
+      const rfb = rfbRef.current as any;
+      const container = containerRef.current;
+      if (!rfb || !container) {
+        resizeFrameRef.current = null;
+        return;
+      }
+
+      const { width, height } = container.getBoundingClientRect();
+      if (width < 2 || height < 2) {
+        resizeFrameRef.current = window.requestAnimationFrame(run);
+        return;
+      }
+
+      rfb._updateClip?.();
+      rfb._updateScale?.();
+      resizeFrameRef.current = null;
+    };
+
+    if (resizeFrameRef.current !== null) {
+      window.cancelAnimationFrame(resizeFrameRef.current);
+    }
+
+    resizeFrameRef.current = window.requestAnimationFrame(() => {
+      resizeFrameRef.current = window.requestAnimationFrame(run);
+    });
+  }, []);
 
   useEffect(() => {
     let rfb: any = null;
@@ -45,13 +75,16 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
         rfb.showDotCursor = true;
 
         rfb.addEventListener("connect", () => {
-          if (!cancelled) setConnected(true);
+          if (!cancelled) {
+            setConnected(true);
+            scheduleViewportRefresh();
+          }
         });
 
         rfb.addEventListener("disconnect", () => {
           if (!cancelled) {
             setConnected(false);
-            onDisconnect();
+            onDisconnect(profileId);
           }
         });
 
@@ -77,8 +110,26 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
         }
       }
       rfbRef.current = null;
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = null;
+      }
     };
-  }, [profileId, onDisconnect]);
+  }, [profileId, onDisconnect, scheduleViewportRefresh]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !connected) return;
+
+    scheduleViewportRefresh();
+
+    const observer = new ResizeObserver(() => {
+      scheduleViewportRefresh();
+    });
+    observer.observe(container);
+
+    return () => observer.disconnect();
+  }, [connected, scheduleViewportRefresh]);
 
   // Host→VNC: intercept Ctrl+V/Cmd+V at keydown (capture phase)
   // Must fire BEFORE noVNC's canvas listener to prevent the race condition
@@ -211,10 +262,11 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
   useEffect(() => {
     const handleFsChange = () => {
       setFullscreen(!!document.fullscreenElement);
+      scheduleViewportRefresh();
     };
     document.addEventListener("fullscreenchange", handleFsChange);
     return () => document.removeEventListener("fullscreenchange", handleFsChange);
-  }, []);
+  }, [scheduleViewportRefresh]);
 
   if (error) {
     return (
@@ -228,7 +280,7 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
   }
 
   return (
-    <div className="relative h-full flex flex-col">
+    <div className="relative flex h-full min-h-0 flex-col">
       {/* Toolbar */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-surface-1 border-b border-border">
         <div className="flex items-center gap-2">
@@ -272,11 +324,11 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
       </div>
 
       {/* VNC canvas container */}
-      <div
-        ref={containerRef}
-        className="flex-1 bg-black overflow-hidden"
-        style={{ minHeight: 0 }}
-      />
+        <div
+          ref={containerRef}
+          className="min-h-0 flex-1 overflow-hidden bg-black"
+          style={{ minHeight: 0 }}
+        />
     </div>
   );
 }

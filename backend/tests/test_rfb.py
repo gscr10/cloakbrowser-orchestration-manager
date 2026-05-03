@@ -5,7 +5,9 @@ from __future__ import annotations
 import struct
 
 from backend.main import (
+    _build_framebuffer_update_request,
     _build_server_cut_text,
+    _frame_contains_rfb_type,
     _filter_rfb_client_messages,
     _parse_kasmvnc_clipboard,
     _rewrite_pointer_event,
@@ -339,3 +341,15 @@ def test_filter_mixed_frame():
 
 def test_filter_empty_input():
     assert _filter_rfb_client_messages(b"") == b""
+
+
+def test_frame_contains_rfb_type_detects_batched_messages():
+    data = _make_set_encodings([0, 1]) + _make_fb_update_request()
+    assert _frame_contains_rfb_type(data, 2) is True
+    assert _frame_contains_rfb_type(data, 3) is True
+    assert _frame_contains_rfb_type(data, 5) is False
+
+
+def test_build_framebuffer_update_request_full_frame():
+    data = _build_framebuffer_update_request(1920, 1080)
+    assert data == struct.pack(">BBHHHH", 3, 0, 0, 0, 1920, 1080)

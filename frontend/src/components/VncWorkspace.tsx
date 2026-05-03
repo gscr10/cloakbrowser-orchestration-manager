@@ -52,11 +52,11 @@ export function VncWorkspace({
           return (
             <article
               key={profile.id}
-              className={`overflow-hidden rounded-[24px] border bg-slate-950/70 shadow-[0_18px_60px_rgba(15,23,42,0.45)] transition ${
+              className={`flex min-h-0 flex-col overflow-hidden rounded-[24px] border bg-slate-950/70 shadow-[0_18px_60px_rgba(15,23,42,0.45)] transition ${
                 active
                   ? "border-sky-400/40 ring-1 ring-sky-400/25"
                   : "border-white/10"
-              }`}
+               }`}
             >
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-white/[0.03] px-4 py-3">
                 <button
@@ -99,12 +99,12 @@ export function VncWorkspace({
                 </div>
               </div>
 
-              <div className="min-h-[420px] bg-black">
+              <div className="h-[420px] min-h-[420px] bg-black xl:h-[520px]">
                 <ProfileViewer
                   profileId={profile.id}
                   cdpUrl={profile.cdp_url}
                   clipboardSync={profile.clipboard_sync}
-                  onDisconnect={() => onDisconnect(profile.id)}
+                  onDisconnect={onDisconnect}
                 />
               </div>
             </article>

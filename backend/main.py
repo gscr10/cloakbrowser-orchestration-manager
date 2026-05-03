@@ -391,6 +391,24 @@ def _filter_rfb_client_messages(data: bytes) -> bytes:
     return bytes(result)
 
 
+def _frame_contains_rfb_type(data: bytes, target_type: int) -> bool:
+    """Return True when a concatenated RFB frame contains the target message type."""
+    offset = 0
+    while offset < len(data):
+        msg_len = _rfb_msg_length(data, offset)
+        if msg_len is None or offset + msg_len > len(data):
+            return False
+        if data[offset] == target_type:
+            return True
+        offset += msg_len
+    return False
+
+
+def _build_framebuffer_update_request(width: int, height: int, incremental: bool = False) -> bytes:
+    """Build an RFB FramebufferUpdateRequest message."""
+    return struct.pack(">BBHHHH", 3, 1 if incremental else 0, 0, 0, width, height)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
@@ -798,6 +816,10 @@ async def vnc_proxy(websocket: WebSocket, profile_id: str):
         await websocket.close(code=4004, reason="Profile not running")
         return
 
+    profile = db.get_profile(profile_id) or {}
+    screen_width = int(profile.get("screen_width") or 1920)
+    screen_height = int(profile.get("screen_height") or 1080)
+
     # Accept with client's requested subprotocol (if any) — RFC 6455 requires
     # the server must not respond with a subprotocol the client didn't request.
     requested = websocket.scope.get("subprotocols", [])
@@ -866,6 +888,14 @@ async def vnc_proxy(websocket: WebSocket, profile_id: str):
                                     continue
                                 logger.debug("VNC send: %d bytes first_type=%d hex=%s", len(filtered), filtered[0], filtered[:100].hex())
                                 await vnc_ws.send(filtered)
+
+                                # noVNC may wait for a first framebuffer refresh after
+                                # SetEncodings/extension negotiation. If the client frame
+                                # didn't include a FramebufferUpdateRequest, trigger one
+                                # explicitly so the viewer doesn't stay connected on a
+                                # blank canvas.
+                                if _frame_contains_rfb_type(data, 2) and not _frame_contains_rfb_type(data, 3):
+                                    await vnc_ws.send(_build_framebuffer_update_request(screen_width, screen_height))
                             else:
                                 dropped += 1
 
