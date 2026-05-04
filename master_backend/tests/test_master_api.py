@@ -417,6 +417,24 @@ def test_master_provider_and_provision_dry_run(master_app_client: TestClient, tm
     assert len(list_jobs.json()) >= 1
 
 
+def test_master_provision_endpoint_runs_in_threadpool(master_app_client: TestClient, monkeypatch):
+    from master_backend import main as master_main
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_in_threadpool(func, *args, **kwargs):
+        captured["func"] = func
+        captured["kwargs"] = kwargs
+        return {"job": {"status": "success"}, "items": []}
+
+    monkeypatch.setattr(master_main, "run_in_threadpool", fake_run_in_threadpool)
+
+    resp = master_app_client.post("/api/master/provision/run", json={"dry_run": False})
+    assert resp.status_code == 200
+    assert captured["func"] is master_control.run_provision
+    assert captured["kwargs"] == {"dry_run": False}
+
+
 def test_master_provision_servers_endpoint(master_app_client: TestClient, tmp_path: Path, monkeypatch):
     server_list = tmp_path / "servers.json"
     server_list.write_text(
@@ -500,6 +518,50 @@ def test_master_provision_non_dry_run_uses_command_templates(master_app_client: 
     assert isinstance(cmd, list)
     assert "root@10.0.0.10" in cmd
     assert "echo boot worker-a 9; echo start 10.0.0.10 http://master.test:8080" in cmd
+
+
+def test_master_provision_default_start_command_sets_public_worker_api(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    server_list = tmp_path / "servers.json"
+    server_list.write_text(
+        json.dumps(
+            {
+                "servers": [
+                    {
+                        "node_id": "worker-public",
+                        "host": "203.0.113.10",
+                        "username": "root",
+                        "max_profiles": 2,
+                        "enabled": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(master_control, "SERVER_LIST_PATH", server_list)
+    monkeypatch.setattr(master_control, "PROVISION_CONFIG_PATH", tmp_path / "missing-provision.json")
+    monkeypatch.setattr(master_control, "PROVISION_MASTER_BASE_URL", "http://198.51.100.20:8080")
+    monkeypatch.setattr(master_control, "PROVISION_WORKER_API_BASE", "http://{host}:8080")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, capture_output, text, check, timeout, env=None):
+        captured["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(master_control.subprocess, "run", fake_run)
+    monkeypatch.setattr(master_control, "verify_node_registered", lambda *args, **kwargs: (True, "verified"))
+
+    master_app_client.put("/api/master/providers/active", json={"provider": "static"})
+    provision = master_app_client.post("/api/master/provision/run", json={"dry_run": False})
+    assert provision.status_code == 200
+
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    remote_cmd = cmd[-1]
+    assert "--shm-size=512m" in remote_cmd
+    assert "-e MASTER_BASE_URL=http://198.51.100.20:8080" in remote_cmd
+    assert "-e WORKER_API_BASE=http://203.0.113.10:8080" in remote_cmd
 
 
 def test_master_provision_uses_config_file(master_app_client: TestClient, tmp_path: Path, monkeypatch):

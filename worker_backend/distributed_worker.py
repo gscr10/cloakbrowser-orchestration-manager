@@ -142,7 +142,7 @@ async def process_one_task(client: httpx.AsyncClient, cfg: dict[str, Any], brows
                 "timeout_seconds": int(payload.get("timeout_seconds") or 300),
             }
         )
-        await scheduler.tick(browser_mgr)
+        await scheduler.tick(browser_mgr, task_id=local_task["id"])
         latest = db.get_task(local_task["id"])
         if not latest or latest.get("status") in {"queued", "failed"}:
             reason = latest.get("failure_reason") if latest else "local task missing"

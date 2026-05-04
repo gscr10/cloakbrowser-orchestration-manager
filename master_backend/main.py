@@ -11,6 +11,7 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -273,7 +274,7 @@ async def master_validate_feishu_cli_provider():
 @app.post("/api/master/provision/run")
 async def master_run_provision(req: MasterProvisionRunRequest):
     try:
-        return master_control.run_provision(dry_run=req.dry_run)
+        return await run_in_threadpool(master_control.run_provision, dry_run=req.dry_run)
     except NotImplementedError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

@@ -382,6 +382,7 @@ await page.goto("https://example.com");
 | --- | --- | --- |
 | `DISTRIBUTED_WORKER_ENABLED` | `false` | 设为 `true` 时启动 Worker 拉任务循环。 |
 | `MASTER_BASE_URL` | `http://127.0.0.1:8080` | Master API 地址。 |
+| `WORKER_API_BASE` | `http://127.0.0.1:<WORKER_API_PORT>` | Worker 注册给 Master 的可访问 API 地址。公网或多机部署必须设为 `http://<worker-ip>:8080`。 |
 | `WORKER_NODE_ID` | 主机名 | Worker 节点唯一标识。 |
 | `WORKER_HOSTNAME` | 主机名 | Worker 对外展示主机名。 |
 | `WORKER_POLL_INTERVAL_SECONDS` | `5` | 空队列轮询间隔。 |
@@ -441,11 +442,12 @@ await page.goto("https://example.com");
 | `MASTER_PROVISION_VERIFY_INTERVAL_SECONDS` | `2` | 注册心跳校验轮询间隔（秒）。 |
 | `MASTER_NODE_HEARTBEAT_TTL_SECONDS` | `30` | 节点心跳超时阈值，超时节点不会参与任务分配。 |
 | `MASTER_PROVISION_WORKER_IMAGE` | `ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest` | Worker 部署镜像。 |
-| `MASTER_PROVISION_MASTER_BASE_URL` | `http://host.docker.internal:8080` | Worker 回连 Master 的地址模板值。 |
+| `MASTER_PROVISION_MASTER_BASE_URL` | `http://host.docker.internal:8080` | Worker 回连 Master 的地址模板值。公网多机部署必须设为 `http://<master-ip>:8080`。 |
+| `MASTER_PROVISION_WORKER_API_BASE` | `http://{host}:8080` | Worker 注册给 Master 的 API 地址模板值，支持 `{host}` 等占位符。 |
 | `MASTER_PROVISION_BOOTSTRAP_CMD` | `set -e; mkdir -p /opt/cloak-manager-worker/config; docker --version >/dev/null 2>&1; docker pull <worker-image>` | 初始化前置命令。 |
 | `MASTER_PROVISION_START_CMD` | `set -e; docker rm -f cloak-manager-worker ...; docker run ...` | 启动 Worker 命令。 |
 
-模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`、`{master_base_url}`、`{auth_token}`。
+模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`、`{master_base_url}`、`{worker_api_base}`、`{auth_token}`。
 
 也支持配置文件模式（推荐）：设置 `MASTER_PROVISION_CONFIG_PATH`（默认 `/config/provision.json`），格式可参考 `config/provision.json.example`。当配置文件存在时优先使用配置文件中的 `timeout_seconds`、`max_parallel`、`bootstrap_cmd`、`start_cmd`。
 
@@ -514,7 +516,22 @@ Worker 服务启动示例（保留现有后端）：
 ```bash
 export DISTRIBUTED_WORKER_ENABLED=true
 export MASTER_BASE_URL=http://<master-host>:8080
+export WORKER_API_BASE=http://<worker-host>:8080
 python3 -m uvicorn worker_backend.main:app --host 0.0.0.0 --port 8080
+```
+
+公网两机调试时，Master 和 Worker 前端/API 都通过 `8080/tcp` 暴露：
+
+```text
+Master: http://<master-public-ip>:8080
+Worker: http://<worker-public-ip>:8080
+```
+
+VNC 也通过 Worker 的 `8080` WebSocket 代理访问，不需要在安全组额外开放 KasmVNC 内部的 `6100+` 端口。通过 Master provision 部署公网 Worker 时，至少设置：
+
+```bash
+export MASTER_PROVISION_MASTER_BASE_URL=http://<master-public-ip>:8080
+export MASTER_PROVISION_WORKER_API_BASE=http://{host}:8080
 ```
 
 本地一键联调（Master + Worker）可使用：`examples/master-worker/run_local.sh`。

@@ -36,12 +36,17 @@ def submit_task(payload: dict[str, Any]) -> dict[str, Any]:
     return db.create_task(**payload)
 
 
-async def tick(browser_mgr: BrowserManager) -> dict[str, Any]:
+async def tick(browser_mgr: BrowserManager, task_id: str | None = None) -> dict[str, Any]:
     """Start the next queued task if local capacity allows it."""
     if len(browser_mgr.running) >= max_running_profiles():
         return scheduler_status(browser_mgr)
 
-    task = db.next_queued_task()
+    if task_id:
+        task = db.get_task(task_id)
+        if task and task.get("status") != "queued":
+            return scheduler_status(browser_mgr)
+    else:
+        task = db.next_queued_task()
     if not task:
         return scheduler_status(browser_mgr)
 
