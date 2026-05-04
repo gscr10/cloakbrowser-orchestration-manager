@@ -212,13 +212,36 @@ def _fetch_worker_profile_id(node: dict[str, Any], timeout_seconds: float = 5.0)
     return None
 
 
+def _create_worker_profile(node: dict[str, Any], timeout_seconds: float = 8.0) -> str | None:
+    api_base = (node.get("api_base") or "").strip().rstrip("/")
+    if not api_base:
+        return None
+    headers = None
+    token = (node.get("token") or "").strip()
+    if token:
+        headers = {"Authorization": f"Bearer {token}"}
+    node_id = (node.get("node_id") or "worker").strip() or "worker"
+    payload = {"name": f"auto-{node_id}", "platform": "windows"}
+    try:
+        with httpx.Client(base_url=api_base, headers=headers, timeout=timeout_seconds) as client:
+            resp = client.post("/api/profiles", json=payload)
+            resp.raise_for_status()
+            body = resp.json()
+    except Exception:
+        return None
+    profile_id = body.get("id") if isinstance(body, dict) else None
+    return profile_id if isinstance(profile_id, str) and profile_id else None
+
+
 def ensure_task_profile_for_node(task: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
-    if task.get("task_type") != "external_cdp":
+    if task.get("task_type") not in {"external_cdp", "open_url"}:
         return task
     payload = dict(task.get("payload") or {})
     if (payload.get("profile_id") or "").strip():
         return task
     profile_id = _fetch_worker_profile_id(node)
+    if not profile_id:
+        profile_id = _create_worker_profile(node)
     if not profile_id:
         return task
     payload["profile_id"] = profile_id

@@ -289,6 +289,70 @@ def test_master_external_cdp_keeps_empty_profile_id_when_worker_has_none(master_
     assert pulled_task["payload"].get("profile_id") is None
 
 
+def test_master_open_url_auto_fills_profile_id_on_pull(master_app_client: TestClient, monkeypatch):
+    master_app_client.post(
+        "/api/master/nodes/register",
+        json={
+            "node_id": "worker-a",
+            "hostname": "worker-a.local",
+            "api_base": "http://127.0.0.1:8081",
+            "max_profiles": 10,
+        },
+    )
+    master_app_client.post(
+        "/api/master/nodes/heartbeat",
+        json={"node_id": "worker-a", "running_profiles": 0, "status": "online"},
+    )
+    monkeypatch.setattr(master_control, "_fetch_worker_profile_id", lambda node: "auto-open-url-p1")
+
+    created = master_app_client.post(
+        "/api/master/tasks",
+        json={"authorized_target": "internal test app", "task_type": "open_url", "url": "https://www.baidu.com"},
+    )
+    assert created.status_code == 201
+    task = created.json()
+    assert task["profile_id"] is None
+
+    pulled = master_app_client.post("/api/master/tasks/pull", json={"node_id": "worker-a"})
+    assert pulled.status_code == 200
+    pulled_task = pulled.json()["task"]
+    assert pulled_task["id"] == task["id"]
+    assert pulled_task["profile_id"] == "auto-open-url-p1"
+    assert pulled_task["payload"]["profile_id"] == "auto-open-url-p1"
+
+
+def test_master_open_url_auto_creates_profile_when_worker_has_none(master_app_client: TestClient, monkeypatch):
+    master_app_client.post(
+        "/api/master/nodes/register",
+        json={
+            "node_id": "worker-a",
+            "hostname": "worker-a.local",
+            "api_base": "http://127.0.0.1:8081",
+            "max_profiles": 10,
+        },
+    )
+    master_app_client.post(
+        "/api/master/nodes/heartbeat",
+        json={"node_id": "worker-a", "running_profiles": 0, "status": "online"},
+    )
+    monkeypatch.setattr(master_control, "_fetch_worker_profile_id", lambda node: None)
+    monkeypatch.setattr(master_control, "_create_worker_profile", lambda node: "auto-created-open-url-p1")
+
+    created = master_app_client.post(
+        "/api/master/tasks",
+        json={"authorized_target": "internal test app", "task_type": "open_url", "url": "https://www.baidu.com"},
+    )
+    assert created.status_code == 201
+    task = created.json()
+
+    pulled = master_app_client.post("/api/master/tasks/pull", json={"node_id": "worker-a"})
+    assert pulled.status_code == 200
+    pulled_task = pulled.json()["task"]
+    assert pulled_task["id"] == task["id"]
+    assert pulled_task["profile_id"] == "auto-created-open-url-p1"
+    assert pulled_task["payload"]["profile_id"] == "auto-created-open-url-p1"
+
+
 def test_master_cluster_marks_stale_nodes(master_app_client: TestClient, monkeypatch):
     master_app_client.post(
         "/api/master/nodes/register",
