@@ -1,8 +1,8 @@
 # CloakBrowser Orchestration Manager
 
-这是一个面向单机部署的 CloakBrowser 编排管理服务，用于运行隔离的浏览器 Profile，并提供 Web UI、HTTP API、CLI、持久化浏览器状态、代理池配置和轻量级本地任务调度能力。
+这是一个面向公网 Master/Worker 部署的 CloakBrowser 编排管理服务。Master 负责服务器清单、批量初始化和全局任务分配；Worker 负责运行隔离浏览器 Profile，并通过 Worker UI/API、VNC 和 CDP 暴露执行能力。
 
-本仓库作为独立项目维护：`gscr10/cloakbrowser-orchestration-manager`。项目使用 CloakBrowser 作为浏览器运行时，但目标不是简单复刻 Profile GUI，而是把 Docker 镜像作为稳定运行时，把 Profile、代理、任务调度和自动化接入通过外部配置、API 和 CLI 管理起来。
+本仓库作为独立项目维护：`gscr10/cloakbrowser-orchestration-manager`。项目使用 CloakBrowser 作为浏览器运行时，但目标不是简单复刻 Profile GUI，而是把 Docker 镜像作为稳定运行时，把公网 Worker、Profile、代理、任务调度和自动化接入通过外部配置、API 和 CLI 管理起来。
 
 ## 项目能力
 
@@ -14,12 +14,11 @@
 - Docker 运行时支持挂载 `/config/profiles.json` 和 `/config/proxies.csv` 进行外部配置导入。
 - SQLite 本地存储位于 `/data`，保存 Profile、代理元数据、任务、运行记录和浏览器会话状态。
 - 单机调度器按本地并发上限启动队列中的授权任务。
-- 可选 token 认证，用于保护 Web UI 和 API。
 - 分布式 Master API（最小版）支持节点注册与心跳、全局任务分配、Provider 管理和批量初始化任务。
 
 ## 适用场景
 
-本项目适用于授权范围内的浏览器自动化、内部测试环境、Profile 隔离、代理分配、多环境验证，以及需要通过 VNC 本地观察浏览器行为的调试场景。
+本项目适用于授权范围内的浏览器自动化、内部测试环境、Profile 隔离、代理分配、多环境验证，以及需要通过公网 Worker 前端/VNC 观察浏览器行为的场景。
 
 请不要将本项目用于凭据填充、垃圾信息、批量注册、未授权爬取、账号接管、验证码绕过、平台滥用或任何超出授权范围的活动。调度器包含基础的本地策略检查，用于拒绝明显不合规的任务描述，但最终使用责任仍由操作者承担。
 
@@ -35,13 +34,12 @@
 ## 架构概览
 
 ```text
-React UI / CLI / external client
-  -> FastAPI backend on port 8080
-  -> SQLite database under /data
-  -> BrowserManager launches CloakBrowser profiles
-  -> KasmVNC exposes live browser viewing
-  -> CDP proxy exposes Playwright/Puppeteer automation access
-  -> Scheduler consumes queued tasks and applies proxy/runtime settings
+Master Console / Master CLI / external client
+  -> Master FastAPI on public port 8080
+  -> Static server list + provision config
+  -> SSH provision starts public Worker containers
+  -> Workers register and heartbeat to Master
+  -> Worker API/UI/VNC/CDP are exposed on each Worker port 8080
 ```
 
 关键运行路径：
@@ -66,90 +64,77 @@ React UI / CLI / external client
 
 约束：Worker 目录不承载 Master 控制面逻辑；Master 目录不承载 Worker 本地 Profile 管理逻辑。
 
-## Docker 快速启动
+## 公网 Master/Worker 快速部署
 
-构建本地镜像：
+推荐从 GHCR 镜像启动公网 Master，再由 Master 通过 SSH provision 公网 Worker。每台服务器都只需要开放应用入口 `8080/tcp`；Worker 的 UI、API、VNC WebSocket 和 CDP 代理都走 Worker 的 `8080`。
 
-```bash
-docker build -t cloakbrowser-orchestration-manager:local .
-```
-
-启动服务，并挂载持久化数据和可选外部配置：
-
-```bash
-docker run --shm-size=512m \
-  -p 8080:8080 \
-  -v cloak-manager-data:/data \
-  -v ./config:/config:ro \
-  -e CONFIG_IMPORT_ON_START=true \
-  -e CONFIG_DIR=/config \
-  -e MAX_RUNNING_PROFILES=auto \
-  -e SCHEDULER_INTERVAL_SECONDS=5 \
-  cloakbrowser-orchestration-manager:local
-```
-
-打开 `http://localhost:8080` 访问 Web UI。
-
-如果需要保护 API 和 Web UI，设置 `AUTH_TOKEN`：
-
-```bash
-docker run --shm-size=512m \
-  -p 8080:8080 \
-  -v cloak-manager-data:/data \
-  -v ./config:/config:ro \
-  -e AUTH_TOKEN=your-secret-token \
-  -e CONFIG_IMPORT_ON_START=true \
-  -e CONFIG_DIR=/config \
-  cloakbrowser-orchestration-manager:local
-```
-
-## Docker Compose
-
-仓库内的 `docker-compose.yml` 会构建本地镜像，将服务绑定到 `127.0.0.1:8080`，将数据保存到 `~/.cloakbrowser-manager`，并把 `./config` 挂载到容器内 `/config`。
-
-```bash
-docker compose up --build
-```
-
-如果环境里只有旧版 `docker-compose`，并且遇到 Python 包兼容问题，可以改用上面的 `docker build` 和 `docker run` 命令。
-
-## GitHub Container Registry 镜像
-
-仓库包含 GitHub Actions 工作流。每次推送到 `main`，或推送 `v*` tag 时，GitHub 会自动构建 Docker 镜像并推送到 GHCR：
+镜像：
 
 ```text
-ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest
 ghcr.io/gscr10/cloakbrowser-orchestration-manager-master:latest
+ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest
 ```
 
-其他 Linux 服务器可以直接拉取镜像运行，不需要在每台服务器上重新 `docker build`。
-
-Worker 节点示例：
+1. 在 Master 机器准备配置：
 
 ```bash
-docker pull ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest
+export MASTER_PUBLIC_IP=<master-public-ip>
 
-docker run --shm-size=512m \
-  -p 8080:8080 \
-  -v cloak-manager-data:/data \
-  -v ./config:/config:ro \
-  -e CONFIG_IMPORT_ON_START=true \
-  -e CONFIG_DIR=/config \
-  -e MAX_RUNNING_PROFILES=auto \
-  ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest
+cp config/servers.json.example config/servers.json
+cp config/provision.json.example config/provision.json
+
+# config/servers.json 里填写 Worker 公网 IP、SSH 用户、端口和 max_profiles。
+export MASTER_PROVISION_MASTER_BASE_URL="http://${MASTER_PUBLIC_IP}:8080"
+export MASTER_PROVISION_WORKER_API_BASE="http://{host}:8080"
 ```
 
-Master 节点示例：
+2. 启动 Master：
 
 ```bash
 docker pull ghcr.io/gscr10/cloakbrowser-orchestration-manager-master:latest
 
-docker run -p 8080:8080 \
+docker run -d --name cloak-manager-master --restart unless-stopped \
+  -p 8080:8080 \
   -v cloak-master-data:/data \
+  -v "$PWD/config:/config:ro" \
+  -e MASTER_SERVER_LIST_PATH=/config/servers.json \
+  -e MASTER_PROVISION_CONFIG_PATH=/config/provision.json \
+  -e MASTER_PROVISION_MASTER_BASE_URL="${MASTER_PROVISION_MASTER_BASE_URL}" \
+  -e MASTER_PROVISION_WORKER_API_BASE="${MASTER_PROVISION_WORKER_API_BASE}" \
   ghcr.io/gscr10/cloakbrowser-orchestration-manager-master:latest
 ```
 
-如果 GHCR package 设置为 private，需要先在服务器上执行 `docker login ghcr.io`。如果设置为 public，服务器可以直接拉取。
+3. 选择静态 Provider，先 dry-run，再真实 provision Worker：
+
+```bash
+python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" providers
+python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" set-provider static
+python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" provision-run --dry-run
+python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" provision-run --no-dry-run
+python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" provision-jobs
+```
+
+默认 provision 模板会先尝试直接执行 `docker`，失败时自动回退到 `sudo -n docker`。远端用户需要能无交互执行 Docker 或具备无交互 sudo 权限。
+
+4. 创建任务并人工检查前端：
+
+```bash
+python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" create-task \
+  --authorized-target "internal test app" \
+  --task-type open_url
+
+python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" cluster
+python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" tasks
+```
+
+访问：
+
+```text
+Master Console: http://<master-public-ip>:8080
+Worker UI/API:  http://<worker-public-ip>:8080
+```
+
+更完整的两机部署步骤见 `examples/master-worker/mvp.md`。如果 GHCR package 设置为 private，需要先在服务器上执行 `docker login ghcr.io`。
 
 ## 运行时环境变量
 
@@ -442,12 +427,16 @@ await page.goto("https://example.com");
 | `MASTER_PROVISION_VERIFY_INTERVAL_SECONDS` | `2` | 注册心跳校验轮询间隔（秒）。 |
 | `MASTER_NODE_HEARTBEAT_TTL_SECONDS` | `30` | 节点心跳超时阈值，超时节点不会参与任务分配。 |
 | `MASTER_PROVISION_WORKER_IMAGE` | `ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest` | Worker 部署镜像。 |
-| `MASTER_PROVISION_MASTER_BASE_URL` | `http://host.docker.internal:8080` | Worker 回连 Master 的地址模板值。公网多机部署必须设为 `http://<master-ip>:8080`。 |
+| `MASTER_PROVISION_MASTER_BASE_URL` | `http://host.docker.internal:8080` | Worker 回连 Master 的地址模板值。默认值仅用于本地 Docker 特例；公网多机部署必须设为 `http://<master-ip>:8080`。 |
 | `MASTER_PROVISION_WORKER_API_BASE` | `http://{host}:8080` | Worker 注册给 Master 的 API 地址模板值，支持 `{host}` 等占位符。 |
-| `MASTER_PROVISION_BOOTSTRAP_CMD` | `set -e; mkdir -p /opt/cloak-manager-worker/config; docker --version >/dev/null 2>&1; docker pull <worker-image>` | 初始化前置命令。 |
-| `MASTER_PROVISION_START_CMD` | `set -e; docker rm -f cloak-manager-worker ...; docker run ...` | 启动 Worker 命令。 |
+| `MASTER_PROVISION_BOOTSTRAP_CMD` | `set -e; mkdir -p /opt/cloak-manager-worker/config; DOCKER="docker"; docker ps ... || DOCKER="sudo -n docker"; $DOCKER pull <worker-image>` | 初始化前置命令。 |
+| `MASTER_PROVISION_START_CMD` | `set -e; DOCKER="docker"; docker ps ... || DOCKER="sudo -n docker"; $DOCKER rm ...; $DOCKER run ...` | 启动 Worker 命令。 |
 
 模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`、`{master_base_url}`、`{worker_api_base}`、`{auth_token}`。
+
+默认模板会先尝试当前 SSH 用户直接访问 Docker daemon；如果失败，会自动改用 `sudo -n docker`。远端用户需要具备无交互 sudo 权限，否则 non dry-run 会失败并返回远端错误。
+
+`host.docker.internal` 只适合 Master/Worker 在本地 Docker 环境互访的调试场景；公网部署应始终显式设置 `MASTER_PROVISION_MASTER_BASE_URL`。
 
 也支持配置文件模式（推荐）：设置 `MASTER_PROVISION_CONFIG_PATH`（默认 `/config/provision.json`），格式可参考 `config/provision.json.example`。当配置文件存在时优先使用配置文件中的 `timeout_seconds`、`max_parallel`、`bootstrap_cmd`、`start_cmd`。
 
@@ -534,7 +523,7 @@ export MASTER_PROVISION_MASTER_BASE_URL=http://<master-public-ip>:8080
 export MASTER_PROVISION_WORKER_API_BASE=http://{host}:8080
 ```
 
-本地一键联调（Master + Worker）可使用：`examples/master-worker/run_local.sh`。
+本地一键联调脚本 `examples/master-worker/run_local.sh` 仅用于开发调试，不是公网部署主流程。
 
 ## 认证
 
@@ -549,7 +538,7 @@ export MASTER_PROVISION_WORKER_API_BASE=http://{host}:8080
 
 如果服务暴露到 localhost 之外，应在前面放置 HTTPS 终止层，并根据部署环境做好访问控制。Manager 本身提供 HTTP 服务。
 
-## 开发
+## 附录：本地开发
 
 后端开发环境：
 
@@ -562,7 +551,7 @@ python3 -m uvicorn worker_backend.main:app --host 0.0.0.0 --port 8080
 
 ### 本地开发矩阵（Master + Worker）
 
-推荐使用 4 个终端分别启动：
+该矩阵仅用于本机源码调试。公网部署请使用上面的 Master 镜像和 provision 流程。
 
 可先参考集中式样例文件：`examples/master-worker/env.local.sample`。
 
@@ -621,12 +610,21 @@ npm run dev -- --host 0.0.0.0 --port 5174
 Master 前端 API 代理环境变量：
 
 - `master-frontend/.env.example` 使用 `VITE_API_PROXY_TARGET=http://127.0.0.1:8080`
+- 两个前端的 Vite `allowedHosts` 可用 `VITE_ALLOWED_HOSTS=.example.com,localhost` 覆盖；默认保留 `.monkeycode-ai.online`。
 
 当启用 `AUTH_TOKEN` 时，可在 Master 前端右上角输入并保存 Token，前端会自动附带 `Authorization: Bearer <token>` 请求头。
 
 如果不设置该变量，两个前端都默认代理到 `http://localhost:8080`。
 
 后端与端口相关变量也可参考：`examples/master-worker/env.local.sample`。
+
+### 本地单机 Docker Compose
+
+`docker-compose.yml` 保留为本地单机 Worker Manager 开发辅助，会构建本地镜像、绑定 `127.0.0.1:8080`，并把数据保存到 `~/.cloakbrowser-manager`。它不启动公网 Master/Worker 编排流程。
+
+```bash
+docker compose up --build
+```
 
 前端开发环境：
 

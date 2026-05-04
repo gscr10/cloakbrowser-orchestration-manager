@@ -3,10 +3,13 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.pytest_cache/
 
 # Node
 node_modules/
+*.tsbuildinfo
 worker-frontend/dist/
+master-frontend/dist/
 master-frontend/.vite/
 
 # IDE
@@ -22,6 +25,7 @@ deploy.sh
 
 # Claude Code
 .claude/
+.monkeycode/
 CLAUDE.md
 publish-docker.sh
 .beads

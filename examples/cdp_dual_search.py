@@ -1,4 +1,4 @@
-"""Create or reuse two profiles and drive them via Playwright over CDP.
+"""Worker API example: create or reuse two profiles and drive them over CDP.
 
 Usage:
   python3 examples/cdp_dual_search.py

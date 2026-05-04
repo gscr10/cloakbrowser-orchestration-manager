@@ -406,6 +406,10 @@ def test_master_provider_and_provision_dry_run(master_app_client: TestClient, tm
     assert set_provider.status_code == 200
     assert set_provider.json()["active"] == "static"
 
+    reserved_provider = master_app_client.put("/api/master/providers/active", json={"provider": "feishu_cli"})
+    assert reserved_provider.status_code == 422
+    assert "not implemented yet" in reserved_provider.json()["detail"]
+
     provision = master_app_client.post("/api/master/provision/run", json={"dry_run": True})
     assert provision.status_code == 200
     data = provision.json()
@@ -529,7 +533,7 @@ def test_master_provision_default_start_command_sets_public_worker_api(master_ap
                     {
                         "node_id": "worker-public",
                         "host": "203.0.113.10",
-                        "username": "root",
+                        "username": "ec2-user",
                         "max_profiles": 2,
                         "enabled": True,
                     }
@@ -559,6 +563,14 @@ def test_master_provision_default_start_command_sets_public_worker_api(master_ap
     cmd = captured["cmd"]
     assert isinstance(cmd, list)
     remote_cmd = cmd[-1]
+    assert (
+        'DOCKER="docker"; docker ps >/dev/null 2>&1 || DOCKER="sudo -n docker"; '
+        "$DOCKER --version >/dev/null 2>&1"
+    ) in remote_cmd
+    assert "$DOCKER pull ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest" in remote_cmd
+    assert "$DOCKER rm -f cloak-manager-worker" in remote_cmd
+    assert "$DOCKER run -d --name cloak-manager-worker" in remote_cmd
+    assert "docker run -d --name cloak-manager-worker" not in remote_cmd
     assert "--shm-size=512m" in remote_cmd
     assert "-e MASTER_BASE_URL=http://198.51.100.20:8080" in remote_cmd
     assert "-e WORKER_API_BASE=http://203.0.113.10:8080" in remote_cmd

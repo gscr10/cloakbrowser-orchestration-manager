@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Local development helper only. Public Master/Worker deployment should use
+# examples/master-worker/mvp.md and config/provision*.json examples instead.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

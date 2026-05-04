@@ -1,4 +1,5 @@
 services:
+  # Local single-node Worker Manager helper only; not the public Master/Worker flow.
   manager:
     build: .
     shm_size: 512m
