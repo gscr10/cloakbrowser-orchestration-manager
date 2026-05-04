@@ -1,3 +1,3 @@
 [tool.pytest.ini_options]
-testpaths = ["backend/tests"]
+testpaths = ["worker_backend/tests", "master_backend/tests"]
 asyncio_mode = "auto"

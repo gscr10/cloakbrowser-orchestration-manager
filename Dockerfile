@@ -1,9 +1,9 @@
 # Stage 1: Build React frontend
 FROM node:20-slim AS frontend-builder
 WORKDIR /build
-COPY frontend/package.json frontend/package-lock.json* ./
+COPY worker-frontend/package.json worker-frontend/package-lock.json* ./
 RUN npm install
-COPY frontend/ ./
+COPY worker-frontend/ ./
 RUN npm run build
 
 # Stage 2: Production image
@@ -42,14 +42,14 @@ RUN wget -q https://github.com/kasmtech/KasmVNC/releases/download/v1.3.3/kasmvnc
 WORKDIR /app
 
 # Python deps
-COPY backend/requirements.txt /app/backend/
-RUN pip install --no-cache-dir -r /app/backend/requirements.txt
+COPY worker_backend/requirements.txt /app/worker_backend/
+RUN pip install --no-cache-dir -r /app/worker_backend/requirements.txt
 
 # Backend code
-COPY backend/ /app/backend/
+COPY worker_backend/ /app/worker_backend/
 
 # Frontend build from stage 1
-COPY --from=frontend-builder /build/dist /app/frontend/dist
+COPY --from=frontend-builder /build/dist /app/worker-frontend/dist
 
 # Pre-download CloakBrowser binary
 RUN python -c "from cloakbrowser.download import ensure_binary; ensure_binary()"

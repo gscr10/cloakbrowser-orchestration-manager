@@ -1,0 +1,8 @@
+{
+  "timeout_seconds": 120,
+  "max_parallel": 4,
+  "verify_wait_seconds": 30,
+  "verify_interval_seconds": 2,
+  "bootstrap_cmd": "set -e; mkdir -p /opt/cloak-manager-worker; docker --version >/dev/null 2>&1; docker pull ghcr.io/gscr10/cloakbrowser-orchestration-manager:latest",
+  "start_cmd": "set -e; docker rm -f cloak-manager-worker >/dev/null 2>&1 || true; docker run -d --name cloak-manager-worker --restart unless-stopped -p 8080:8080 -v cloak-manager-data:/data -v /opt/cloak-manager-worker/config:/config:ro -e CONFIG_IMPORT_ON_START=true -e CONFIG_DIR=/config -e MAX_RUNNING_PROFILES={max_profiles} ghcr.io/gscr10/cloakbrowser-orchestration-manager:latest"
+}
