@@ -270,6 +270,14 @@ async def master_run_provision(req: MasterProvisionRunRequest):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.get("/api/master/provision/servers")
+async def master_list_provision_servers():
+    try:
+        return {"provider": master_control.get_active_provider_name(), "servers": master_control.list_servers()}
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.get("/api/master/provision/jobs")
 async def master_list_provision_jobs():
     return db.list_provision_jobs()

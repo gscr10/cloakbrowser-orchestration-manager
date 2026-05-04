@@ -22,8 +22,30 @@ SERVER_LIST_PATH = Path(os.environ.get("MASTER_SERVER_LIST_PATH", "/config/serve
 PROVISION_CONFIG_PATH = Path(os.environ.get("MASTER_PROVISION_CONFIG_PATH", "/config/provision.json"))
 PROVISION_TIMEOUT_SECONDS = int(os.environ.get("MASTER_PROVISION_TIMEOUT_SECONDS", "120"))
 PROVISION_MAX_PARALLEL = int(os.environ.get("MASTER_PROVISION_MAX_PARALLEL", "4"))
-PROVISION_BOOTSTRAP_CMD = os.environ.get("MASTER_PROVISION_BOOTSTRAP_CMD", "set -e; mkdir -p /opt/cloak-manager-worker; docker --version >/dev/null 2>&1")
-PROVISION_START_CMD = os.environ.get("MASTER_PROVISION_START_CMD", "set -e; cd /opt/cloak-manager-worker; echo start-worker-placeholder")
+PROVISION_WORKER_IMAGE = os.environ.get("MASTER_PROVISION_WORKER_IMAGE", "ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest")
+PROVISION_MASTER_BASE_URL = os.environ.get("MASTER_PROVISION_MASTER_BASE_URL", "http://host.docker.internal:8080")
+PROVISION_BOOTSTRAP_CMD = os.environ.get(
+    "MASTER_PROVISION_BOOTSTRAP_CMD",
+    f"set -e; mkdir -p /opt/cloak-manager-worker/config; docker --version >/dev/null 2>&1; docker pull {PROVISION_WORKER_IMAGE}",
+)
+PROVISION_START_CMD = os.environ.get(
+    "MASTER_PROVISION_START_CMD",
+    "set -e; "
+    "docker rm -f cloak-manager-worker >/dev/null 2>&1 || true; "
+    "docker run -d --name cloak-manager-worker --restart unless-stopped "
+    "--add-host host.docker.internal:host-gateway "
+    "-p 8080:8080 "
+    "-v cloak-manager-data:/data "
+    "-v /opt/cloak-manager-worker/config:/config:ro "
+    "-e CONFIG_IMPORT_ON_START=true "
+    "-e CONFIG_DIR=/config "
+    "-e DISTRIBUTED_WORKER_ENABLED=true "
+    "-e MAX_RUNNING_PROFILES={max_profiles} "
+    "-e WORKER_NODE_ID={node_id} "
+    "-e MASTER_BASE_URL={master_base_url} "
+    "-e AUTH_TOKEN={auth_token} "
+    f"{PROVISION_WORKER_IMAGE}",
+)
 PROVISION_VERIFY_WAIT_SECONDS = int(os.environ.get("MASTER_PROVISION_VERIFY_WAIT_SECONDS", "30"))
 PROVISION_VERIFY_INTERVAL_SECONDS = float(os.environ.get("MASTER_PROVISION_VERIFY_INTERVAL_SECONDS", "2"))
 NODE_HEARTBEAT_TTL_SECONDS = int(os.environ.get("MASTER_NODE_HEARTBEAT_TTL_SECONDS", "30"))
@@ -230,8 +252,23 @@ def _build_ssh_exec(record: ServerRecord, remote_cmd: str) -> tuple[list[str], d
 def execute_provision(record: ServerRecord, dry_run: bool, cfg: ProvisionConfig) -> tuple[bool, str]:
     if dry_run:
         return True, "dry-run"
-    bootstrap_cmd = cfg.bootstrap_cmd.format(node_id=record.node_id, host=record.host, username=record.username, max_profiles=record.max_profiles)
-    start_cmd = cfg.start_cmd.format(node_id=record.node_id, host=record.host, username=record.username, max_profiles=record.max_profiles)
+    auth_token = os.environ.get("AUTH_TOKEN") or ""
+    bootstrap_cmd = cfg.bootstrap_cmd.format(
+        node_id=record.node_id,
+        host=record.host,
+        username=record.username,
+        max_profiles=record.max_profiles,
+        master_base_url=PROVISION_MASTER_BASE_URL,
+        auth_token=auth_token,
+    )
+    start_cmd = cfg.start_cmd.format(
+        node_id=record.node_id,
+        host=record.host,
+        username=record.username,
+        max_profiles=record.max_profiles,
+        master_base_url=PROVISION_MASTER_BASE_URL,
+        auth_token=auth_token,
+    )
     remote_cmd = f"{bootstrap_cmd}; {start_cmd}"
     cmd, env = _build_ssh_exec(record, remote_cmd)
     askpass_path = env.get("SSH_ASKPASS") if env else None
@@ -279,3 +316,21 @@ def run_provision(dry_run: bool = True) -> dict[str, Any]:
     status = "success" if failed_count == 0 else ("failed" if success_count == 0 else "partial_success")
     updated = db.update_provision_job(job["id"], status=status, success_count=success_count, failed_count=failed_count)
     return {"job": updated, "items": db.list_provision_job_items(job["id"])}
+
+
+def list_servers() -> list[dict[str, Any]]:
+    provider = get_active_provider()
+    out: list[dict[str, Any]] = []
+    for record in provider.get_servers():
+        out.append(
+            {
+                "node_id": record.node_id,
+                "host": record.host,
+                "username": record.username,
+                "port": record.port,
+                "max_profiles": record.max_profiles,
+                "tags": record.tags or [],
+                "enabled": bool(record.enabled),
+            }
+        )
+    return out

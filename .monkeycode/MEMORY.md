@@ -92,3 +92,26 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
 - Instructions:
   - Master 与 Worker 除 API/协议通信外，代码结构必须独立，避免共享同一应用入口和同一前端。
   - Master 作为独立部署单元，Worker 作为独立部署单元；后续开发按两套代码组织推进。
+
+[镜像发布约定]
+- Date: 2026-05-04
+- Context: Agent 在执行 GitHub 预构建双镜像流水线改造时发现
+- Category: 构建方法
+- Instructions:
+  - GHCR 发布采用双镜像命名：`ghcr.io/<repo>-worker` 与 `ghcr.io/<repo>-master`。
+  - `worker` 镜像使用仓库根目录 `Dockerfile`，`master` 镜像使用 `Dockerfile.master`。
+
+[Worker 远程部署模板约定]
+- Date: 2026-05-04
+- Context: Agent 在执行 Master 一键部署 Worker 能力增强时发现
+- Category: 代码模式
+- Instructions:
+  - Provision 命令模板除基础字段外，支持 `{master_base_url}` 与 `{auth_token}` 占位符，用于 Worker 自动回连与鉴权。
+  - 默认部署镜像为 `ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest`，并通过 `MASTER_PROVISION_WORKER_IMAGE` 覆盖。
+
+[默认无确认连续完成]
+- Date: 2026-05-04
+- Context: 用户要求后续执行不再中途确认，直接完成所有未完成任务
+- Instructions:
+  - 不再就实现细节进行中途确认，直接连续实现剩余任务并完成验证。
+  - 输出以最终结果为主，除阻塞问题外不暂停等待用户指示。

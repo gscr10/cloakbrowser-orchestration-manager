@@ -18,10 +18,12 @@ export default function App() {
   const [tasks, setTasks] = useState([]);
   const [events, setEvents] = useState([]);
   const [providers, setProviders] = useState({ active: "", providers: [] });
+  const [provisionServers, setProvisionServers] = useState({ provider: "", servers: [] });
   const [jobs, setJobs] = useState([]);
   const [jobDetail, setJobDetail] = useState(null);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [selectedJobId, setSelectedJobId] = useState("");
+  const [showEnabledOnly, setShowEnabledOnly] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -40,21 +42,29 @@ export default function App() {
     return { online, stale, total: nodes.length };
   }, [nodes]);
 
+  const visibleProvisionServers = useMemo(() => {
+    const servers = provisionServers.servers || [];
+    if (!showEnabledOnly) return servers;
+    return servers.filter((s) => s.enabled);
+  }, [provisionServers, showEnabledOnly]);
+
   const refreshCore = async () => {
     setLoading(true);
     try {
-      const [nextNodes, nextCluster, nextTasks, nextProviders, nextJobs] = await Promise.all([
+      const [nextNodes, nextCluster, nextTasks, nextProviders, nextJobs, nextServers] = await Promise.all([
         api("/api/master/nodes"),
         api("/api/master/cluster/status"),
         api("/api/master/tasks"),
         api("/api/master/providers"),
-        api("/api/master/provision/jobs")
+        api("/api/master/provision/jobs"),
+        api("/api/master/provision/servers")
       ]);
       setNodes(nextNodes);
       setCluster(nextCluster);
       setTasks(nextTasks);
       setProviders(nextProviders);
       setJobs(nextJobs);
+      setProvisionServers(nextServers);
       if (!selectedTaskId && nextTasks[0]) setSelectedTaskId(nextTasks[0].id);
       if (!selectedJobId && nextJobs[0]) setSelectedJobId(nextJobs[0].id);
       setError("");
@@ -95,10 +105,15 @@ export default function App() {
   };
 
   const runProvision = async (dryRun) => {
-    await api("/api/master/provision/run", {
+    const result = await api("/api/master/provision/run", {
       method: "POST",
       body: JSON.stringify({ dry_run: dryRun })
     });
+    const nextJobId = result?.job?.id;
+    if (nextJobId) {
+      setSelectedJobId(nextJobId);
+      setJobDetail(result);
+    }
     await refreshCore();
   };
 
@@ -142,6 +157,8 @@ export default function App() {
 
         <div className="panel">
           <h2>Provision</h2>
+          <p>Provider: <b>{provisionServers.provider || providers.active || "-"}</b></p>
+          <p>Servers: <b>{provisionServers.servers?.length || 0}</b></p>
           <div className="row">
             <button onClick={() => runProvision(true)}>Run Dry-Run</button>
             <button className="warn" onClick={() => runProvision(false)}>Run Deploy</button>
@@ -187,6 +204,30 @@ export default function App() {
       </section>
 
       <section className="grid two">
+        <div className="panel">
+          <h2>Provision Servers</h2>
+          <div className="row between">
+            <p>Showing: <b>{visibleProvisionServers.length}</b> / {provisionServers.servers?.length || 0}</p>
+            <label className="checkbox">
+              <input type="checkbox" checked={showEnabledOnly} onChange={(e) => setShowEnabledOnly(e.target.checked)} />
+              enabled only
+            </label>
+          </div>
+          <table>
+            <thead><tr><th>Node</th><th>Host</th><th>User</th><th>Status</th></tr></thead>
+            <tbody>
+              {visibleProvisionServers.map((s) => (
+                <tr key={s.node_id}>
+                  <td>{s.node_id}</td>
+                  <td>{s.host}:{s.port}</td>
+                  <td>{s.username}</td>
+                  <td>{s.enabled ? "enabled" : "disabled"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
         <div className="panel">
           <h2>Master Tasks</h2>
           <select value={selectedTaskId} onChange={(e) => setSelectedTaskId(e.target.value)}>

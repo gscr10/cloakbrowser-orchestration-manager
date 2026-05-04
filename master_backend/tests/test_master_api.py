@@ -353,6 +353,38 @@ def test_master_provider_and_provision_dry_run(master_app_client: TestClient, tm
     assert len(list_jobs.json()) >= 1
 
 
+def test_master_provision_servers_endpoint(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    server_list = tmp_path / "servers.json"
+    server_list.write_text(
+        json.dumps(
+            {
+                "servers": [
+                    {
+                        "node_id": "worker-a",
+                        "host": "10.0.0.10",
+                        "username": "root",
+                        "port": 2222,
+                        "max_profiles": 10,
+                        "enabled": True,
+                        "tags": ["cn"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(master_control, "SERVER_LIST_PATH", server_list)
+
+    master_app_client.put("/api/master/providers/active", json={"provider": "static"})
+    resp = master_app_client.get("/api/master/provision/servers")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["provider"] == "static"
+    assert len(data["servers"]) == 1
+    assert data["servers"][0]["node_id"] == "worker-a"
+    assert data["servers"][0]["port"] == 2222
+
+
 def test_master_provision_non_dry_run_uses_command_templates(master_app_client: TestClient, tmp_path: Path, monkeypatch):
     server_list = tmp_path / "servers.json"
     server_list.write_text(
@@ -374,7 +406,8 @@ def test_master_provision_non_dry_run_uses_command_templates(master_app_client: 
     monkeypatch.setattr(master_control, "SERVER_LIST_PATH", server_list)
     monkeypatch.setattr(master_control, "PROVISION_CONFIG_PATH", tmp_path / "missing-provision.json")
     monkeypatch.setattr(master_control, "PROVISION_BOOTSTRAP_CMD", "echo boot {node_id} {max_profiles}")
-    monkeypatch.setattr(master_control, "PROVISION_START_CMD", "echo start {host}")
+    monkeypatch.setattr(master_control, "PROVISION_MASTER_BASE_URL", "http://master.test:8080")
+    monkeypatch.setattr(master_control, "PROVISION_START_CMD", "echo start {host} {master_base_url}")
 
     captured: dict[str, object] = {}
 
@@ -402,7 +435,7 @@ def test_master_provision_non_dry_run_uses_command_templates(master_app_client: 
     cmd = captured["cmd"]
     assert isinstance(cmd, list)
     assert "root@10.0.0.10" in cmd
-    assert "echo boot worker-a 9; echo start 10.0.0.10" in cmd
+    assert "echo boot worker-a 9; echo start 10.0.0.10 http://master.test:8080" in cmd
 
 
 def test_master_provision_uses_config_file(master_app_client: TestClient, tmp_path: Path, monkeypatch):

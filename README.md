@@ -118,13 +118,16 @@ docker compose up --build
 仓库包含 GitHub Actions 工作流。每次推送到 `main`，或推送 `v*` tag 时，GitHub 会自动构建 Docker 镜像并推送到 GHCR：
 
 ```text
-ghcr.io/gscr10/cloakbrowser-orchestration-manager:latest
+ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest
+ghcr.io/gscr10/cloakbrowser-orchestration-manager-master:latest
 ```
 
-其他 Linux 服务器可以直接拉取镜像运行，不需要在每台服务器上重新 `docker build`：
+其他 Linux 服务器可以直接拉取镜像运行，不需要在每台服务器上重新 `docker build`。
+
+Worker 节点示例：
 
 ```bash
-docker pull ghcr.io/gscr10/cloakbrowser-orchestration-manager:latest
+docker pull ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest
 
 docker run --shm-size=512m \
   -p 8080:8080 \
@@ -133,7 +136,17 @@ docker run --shm-size=512m \
   -e CONFIG_IMPORT_ON_START=true \
   -e CONFIG_DIR=/config \
   -e MAX_RUNNING_PROFILES=auto \
-  ghcr.io/gscr10/cloakbrowser-orchestration-manager:latest
+  ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest
+```
+
+Master 节点示例：
+
+```bash
+docker pull ghcr.io/gscr10/cloakbrowser-orchestration-manager-master:latest
+
+docker run -p 8080:8080 \
+  -v cloak-master-data:/data \
+  ghcr.io/gscr10/cloakbrowser-orchestration-manager-master:latest
 ```
 
 如果 GHCR package 设置为 private，需要先在服务器上执行 `docker login ghcr.io`。如果设置为 public，服务器可以直接拉取。
@@ -427,12 +440,16 @@ await page.goto("https://example.com");
 | `MASTER_PROVISION_VERIFY_WAIT_SECONDS` | `30` | non dry-run 后等待 Worker 注册心跳的超时时间（秒）。 |
 | `MASTER_PROVISION_VERIFY_INTERVAL_SECONDS` | `2` | 注册心跳校验轮询间隔（秒）。 |
 | `MASTER_NODE_HEARTBEAT_TTL_SECONDS` | `30` | 节点心跳超时阈值，超时节点不会参与任务分配。 |
-| `MASTER_PROVISION_BOOTSTRAP_CMD` | `set -e; mkdir -p /opt/cloak-manager-worker; docker --version >/dev/null 2>&1` | 初始化前置命令。 |
-| `MASTER_PROVISION_START_CMD` | `set -e; cd /opt/cloak-manager-worker; echo start-worker-placeholder` | 启动 Worker 命令。 |
+| `MASTER_PROVISION_WORKER_IMAGE` | `ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest` | Worker 部署镜像。 |
+| `MASTER_PROVISION_MASTER_BASE_URL` | `http://host.docker.internal:8080` | Worker 回连 Master 的地址模板值。 |
+| `MASTER_PROVISION_BOOTSTRAP_CMD` | `set -e; mkdir -p /opt/cloak-manager-worker/config; docker --version >/dev/null 2>&1; docker pull <worker-image>` | 初始化前置命令。 |
+| `MASTER_PROVISION_START_CMD` | `set -e; docker rm -f cloak-manager-worker ...; docker run ...` | 启动 Worker 命令。 |
 
-模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`。
+模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`、`{master_base_url}`、`{auth_token}`。
 
 也支持配置文件模式（推荐）：设置 `MASTER_PROVISION_CONFIG_PATH`（默认 `/config/provision.json`），格式可参考 `config/provision.json.example`。当配置文件存在时优先使用配置文件中的 `timeout_seconds`、`max_parallel`、`bootstrap_cmd`、`start_cmd`。
+
+前端可通过 `GET /api/master/provision/servers` 获取当前 Provider 的服务器清单，并结合 `POST /api/master/provision/run` 实现一键部署。
 
 在 non dry-run 下，Master 会在远程命令执行成功后等待节点注册心跳；若在超时内未收到新心跳，该节点会被标记为初始化失败。
 
