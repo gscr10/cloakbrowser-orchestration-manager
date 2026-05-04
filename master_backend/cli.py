@@ -91,6 +91,8 @@ def cmd_providers(client: MasterClient, _args: argparse.Namespace) -> Any:
 
 
 def cmd_set_provider(client: MasterClient, args: argparse.Namespace) -> Any:
+    if args.provider == "feishu_cli":
+        raise ApiError("feishu_cli provider is reserved and not implemented yet")
     return client.request("PUT", "/api/master/providers/active", {"provider": args.provider})
 
 

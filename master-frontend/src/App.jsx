@@ -153,6 +153,10 @@ export default function App() {
   };
 
   const setProvider = async (provider) => {
+    if (provider === "feishu_cli") {
+      setNotice("feishu_cli 预留未实现，暂不能作为服务器提供方");
+      return;
+    }
     await authedApi("/api/master/providers/active", {
       method: "PUT",
       body: JSON.stringify({ provider })
@@ -222,10 +226,20 @@ export default function App() {
           <h2>提供方</h2>
           <p>当前：<b>{providers.active || "-"}</b></p>
           <div className="row wrap">
-            {providers.providers?.map((name) => (
-              <button key={name} onClick={() => setProvider(name)}>{name}</button>
-            ))}
-            <button onClick={validateFeishu}>校验 feishu_cli</button>
+            {providers.providers?.map((name) => {
+              const reserved = name === "feishu_cli";
+              return (
+                <button
+                  key={name}
+                  onClick={() => setProvider(name)}
+                  disabled={reserved}
+                  title={reserved ? "feishu_cli 预留未实现" : undefined}
+                >
+                  {reserved ? `${name}（未实现）` : name}
+                </button>
+              );
+            })}
+            <button onClick={validateFeishu}>查看 feishu_cli 状态</button>
           </div>
           {feishuCheck && <p>校验结果：{feishuCheck.ready ? "可用" : "未就绪"}（{feishuCheck.message || "-"}）</p>}
         </div>

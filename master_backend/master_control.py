@@ -24,17 +24,25 @@ PROVISION_CONFIG_PATH = Path(os.environ.get("MASTER_PROVISION_CONFIG_PATH", "/co
 PROVISION_TIMEOUT_SECONDS = int(os.environ.get("MASTER_PROVISION_TIMEOUT_SECONDS", "120"))
 PROVISION_MAX_PARALLEL = int(os.environ.get("MASTER_PROVISION_MAX_PARALLEL", "4"))
 PROVISION_WORKER_IMAGE = os.environ.get("MASTER_PROVISION_WORKER_IMAGE", "ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest")
+# The fallback default is only for local Docker debugging; public deployments
+# should always set MASTER_PROVISION_MASTER_BASE_URL explicitly.
 PROVISION_MASTER_BASE_URL = os.environ.get("MASTER_PROVISION_MASTER_BASE_URL", "http://host.docker.internal:8080")
 PROVISION_WORKER_API_BASE = os.environ.get("MASTER_PROVISION_WORKER_API_BASE", "http://{host}:8080")
+PROVISION_DOCKER_AUTO_CMD = (
+    'DOCKER="docker"; '
+    'docker ps >/dev/null 2>&1 || DOCKER="sudo -n docker"; '
+    "$DOCKER --version >/dev/null 2>&1"
+)
 PROVISION_BOOTSTRAP_CMD = os.environ.get(
     "MASTER_PROVISION_BOOTSTRAP_CMD",
-    f"set -e; mkdir -p /opt/cloak-manager-worker/config; docker --version >/dev/null 2>&1; docker pull {PROVISION_WORKER_IMAGE}",
+    f"set -e; mkdir -p /opt/cloak-manager-worker/config; {PROVISION_DOCKER_AUTO_CMD}; $DOCKER pull {PROVISION_WORKER_IMAGE}",
 )
 PROVISION_START_CMD = os.environ.get(
     "MASTER_PROVISION_START_CMD",
     "set -e; "
-    "docker rm -f cloak-manager-worker >/dev/null 2>&1 || true; "
-    "docker run -d --name cloak-manager-worker --restart unless-stopped "
+    f"{PROVISION_DOCKER_AUTO_CMD}; "
+    "$DOCKER rm -f cloak-manager-worker >/dev/null 2>&1 || true; "
+    "$DOCKER run -d --name cloak-manager-worker --restart unless-stopped "
     "--shm-size=512m "
     "--add-host host.docker.internal:host-gateway "
     "-p 8080:8080 "
@@ -121,6 +129,8 @@ def get_active_provider_name() -> str:
 def set_active_provider_name(name: str) -> str:
     if name not in available_providers():
         raise ValueError("provider not supported")
+    if name == "feishu_cli":
+        raise ValueError("feishu_cli provider is reserved and not implemented yet")
     db.set_master_setting(ACTIVE_PROVIDER_KEY, name)
     return name
 
