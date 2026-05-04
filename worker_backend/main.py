@@ -26,6 +26,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import config_importer
 from . import database as db
+from . import distributed_worker
 from . import scheduler
 from .browser_manager import BrowserManager
 from .models import (
@@ -426,8 +427,13 @@ async def lifespan(app: FastAPI):
         )
     await browser_mgr.cleanup_stale()
     app.state.scheduler_task = asyncio.create_task(_scheduler_loop())
+    app.state.distributed_task = None
+    if distributed_worker.enabled():
+        app.state.distributed_task = asyncio.create_task(distributed_worker.worker_loop(browser_mgr))
     logger.info("CloakBrowser Manager started")
     yield
+    if app.state.distributed_task is not None:
+        app.state.distributed_task.cancel()
     app.state.scheduler_task.cancel()
     logger.info("Shutting down — stopping all browsers...")
     await browser_mgr.cleanup_all()
