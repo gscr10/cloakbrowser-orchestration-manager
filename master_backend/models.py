@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class MasterNodeRegisterRequest(BaseModel):
@@ -38,13 +38,6 @@ class MasterTaskCreateRequest(BaseModel):
         if not value:
             raise ValueError("authorized_target is required")
         return value
-
-    @model_validator(mode="after")
-    def validate_profile_for_task_type(self) -> "MasterTaskCreateRequest":
-        if self.task_type == "external_cdp" and not (self.profile_id or "").strip():
-            raise ValueError("profile_id is required for external_cdp")
-        return self
-
 
 class MasterTaskPullRequest(BaseModel):
     node_id: str

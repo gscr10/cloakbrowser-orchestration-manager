@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from . import database as db
 
 ACTIVE_PROVIDER_KEY = "master.active_provider"
@@ -163,6 +165,46 @@ def pick_target_node() -> dict[str, Any] | None:
 def create_master_task(payload: dict[str, Any]) -> dict[str, Any]:
     target = pick_target_node()
     return db.create_master_task(profile_id=payload.get("profile_id"), authorized_target=payload["authorized_target"], task_type=payload["task_type"], payload=payload, timeout_seconds=int(payload.get("timeout_seconds") or 300), max_retries=int(payload.get("max_retries") or 1), target_node_id=target["node_id"] if target else None)
+
+
+def _fetch_worker_profile_id(node: dict[str, Any], timeout_seconds: float = 5.0) -> str | None:
+    api_base = (node.get("api_base") or "").strip().rstrip("/")
+    if not api_base:
+        return None
+    headers = None
+    token = (node.get("token") or "").strip()
+    if token:
+        headers = {"Authorization": f"Bearer {token}"}
+    try:
+        with httpx.Client(base_url=api_base, headers=headers, timeout=timeout_seconds) as client:
+            resp = client.get("/api/profiles")
+            resp.raise_for_status()
+            profiles = resp.json()
+    except Exception:
+        return None
+    if not isinstance(profiles, list):
+        return None
+    for item in profiles:
+        if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("id"):
+            return item["id"]
+    return None
+
+
+def ensure_task_profile_for_node(task: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
+    if task.get("task_type") != "external_cdp":
+        return task
+    payload = dict(task.get("payload") or {})
+    if (payload.get("profile_id") or "").strip():
+        return task
+    profile_id = _fetch_worker_profile_id(node)
+    if not profile_id:
+        return task
+    payload["profile_id"] = profile_id
+    updated = db.update_master_task(task["id"], profile_id=profile_id, payload_json=json.dumps(payload))
+    if updated:
+        db.create_master_task_event(task["id"], node.get("node_id"), "profile_auto_selected", f"profile_id={profile_id}")
+        return updated
+    return task
 
 
 def _build_ssh_exec(record: ServerRecord, remote_cmd: str) -> tuple[list[str], dict[str, str] | None]:

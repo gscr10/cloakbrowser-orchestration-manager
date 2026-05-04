@@ -199,6 +199,7 @@ async def master_pull_task(req: MasterTaskPullRequest):
     task = db.allocate_master_task(req.node_id)
     if not task:
         return {"task": None}
+    task = master_control.ensure_task_profile_for_node(task, node)
     return {"task": task}
 
 

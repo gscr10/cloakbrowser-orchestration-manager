@@ -226,12 +226,67 @@ def test_master_failed_task_is_requeued_with_retry(master_app_client: TestClient
     assert data["retry_count"] == 1
 
 
-def test_master_reject_external_cdp_without_profile_id(master_app_client: TestClient):
+def test_master_external_cdp_auto_fills_profile_id_on_pull(master_app_client: TestClient, monkeypatch):
+    master_app_client.post(
+        "/api/master/nodes/register",
+        json={
+            "node_id": "worker-a",
+            "hostname": "worker-a.local",
+            "api_base": "http://127.0.0.1:8081",
+            "max_profiles": 10,
+        },
+    )
+    master_app_client.post(
+        "/api/master/nodes/heartbeat",
+        json={"node_id": "worker-a", "running_profiles": 0, "status": "online"},
+    )
+    monkeypatch.setattr(master_control, "_fetch_worker_profile_id", lambda node: "auto-p1")
+
     created = master_app_client.post(
         "/api/master/tasks",
         json={"authorized_target": "internal test app", "task_type": "external_cdp"},
     )
-    assert created.status_code == 422
+    assert created.status_code == 201
+    task = created.json()
+    assert task["profile_id"] is None
+
+    pulled = master_app_client.post("/api/master/tasks/pull", json={"node_id": "worker-a"})
+    assert pulled.status_code == 200
+    pulled_task = pulled.json()["task"]
+    assert pulled_task["id"] == task["id"]
+    assert pulled_task["profile_id"] == "auto-p1"
+    assert pulled_task["payload"]["profile_id"] == "auto-p1"
+
+
+def test_master_external_cdp_keeps_empty_profile_id_when_worker_has_none(master_app_client: TestClient, monkeypatch):
+    master_app_client.post(
+        "/api/master/nodes/register",
+        json={
+            "node_id": "worker-a",
+            "hostname": "worker-a.local",
+            "api_base": "http://127.0.0.1:8081",
+            "max_profiles": 10,
+        },
+    )
+    master_app_client.post(
+        "/api/master/nodes/heartbeat",
+        json={"node_id": "worker-a", "running_profiles": 0, "status": "online"},
+    )
+    monkeypatch.setattr(master_control, "_fetch_worker_profile_id", lambda node: None)
+
+    created = master_app_client.post(
+        "/api/master/tasks",
+        json={"authorized_target": "internal test app", "task_type": "external_cdp"},
+    )
+    assert created.status_code == 201
+    task = created.json()
+
+    pulled = master_app_client.post("/api/master/tasks/pull", json={"node_id": "worker-a"})
+    assert pulled.status_code == 200
+    pulled_task = pulled.json()["task"]
+    assert pulled_task["id"] == task["id"]
+    assert pulled_task["profile_id"] is None
+    assert pulled_task["payload"].get("profile_id") is None
 
 
 def test_master_cluster_marks_stale_nodes(master_app_client: TestClient, monkeypatch):
