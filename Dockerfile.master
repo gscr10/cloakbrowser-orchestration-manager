@@ -1,3 +1,13 @@
+# Stage 1: Build Master React frontend
+FROM docker.m.daocloud.io/library/node:20-slim AS master-frontend-builder
+
+WORKDIR /build
+COPY master-frontend/package.json master-frontend/package-lock.json* ./
+RUN npm install
+COPY master-frontend/ ./
+RUN npm run build
+
+# Stage 2: Master backend runtime
 FROM docker.m.daocloud.io/library/python:3.12-slim
 
 WORKDIR /app
@@ -8,6 +18,9 @@ RUN pip install --no-cache-dir -r /app/master_backend/requirements.txt
 
 # Master backend code
 COPY master_backend/ /app/master_backend/
+
+# Master frontend build output for single-port serving
+COPY --from=master-frontend-builder /build/dist /app/master-frontend/dist
 
 EXPOSE 8080
 
