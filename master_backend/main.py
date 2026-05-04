@@ -8,9 +8,11 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from http.cookies import SimpleCookie
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import database as db
@@ -81,6 +83,12 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="CloakBrowser Master API", lifespan=lifespan)
 app.add_middleware(AuthMiddleware)
+
+MASTER_FRONTEND_DIR = Path(__file__).parent.parent / "master-frontend" / "dist"
+if MASTER_FRONTEND_DIR.exists():
+    assets_dir = MASTER_FRONTEND_DIR / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="master-assets")
 
 
 @app.get("/api/status")
@@ -289,3 +297,15 @@ async def master_get_provision_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Provision job not found")
     return {"job": job, "items": db.list_provision_job_items(job_id)}
+
+
+@app.get("/{full_path:path}")
+async def master_spa(full_path: str):
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    if not MASTER_FRONTEND_DIR.exists():
+        raise HTTPException(status_code=404, detail="Master frontend build not found")
+    requested = MASTER_FRONTEND_DIR / full_path
+    if full_path and requested.is_file():
+        return FileResponse(str(requested))
+    return FileResponse(str(MASTER_FRONTEND_DIR / "index.html"))

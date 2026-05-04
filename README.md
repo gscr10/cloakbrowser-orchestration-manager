@@ -483,13 +483,25 @@ python3 -m master_backend.cli provision-job <job-id>
 - Master 机器仅启动 Master 控制面服务（不启动 Worker loop）
 - Worker 机器仅启动 Worker 服务，并通过 `MASTER_BASE_URL` 回连 Master
 
-Master 后端启动示例：
+Master 后端启动示例（同端口同时提供 API + Master 前端页面）：
 
 ```bash
 python3 -m uvicorn master_backend.main:app --host 0.0.0.0 --port 8080
 ```
 
-Master 独立前端启动示例：
+说明：
+
+- 访问 `http://127.0.0.1:8080` 会返回 Master 前端页面。
+- 访问 `http://127.0.0.1:8080/api/...` 使用 Master API。
+- 该模式依赖 `master-frontend/dist`，若前端有更新需先执行一次构建：
+
+```bash
+cd master-frontend
+npm install
+npm run build
+```
+
+如果你在开发模式下需要热更新，再单独启动 Master 前端：
 
 ```bash
 cd master-frontend
