@@ -31,12 +31,14 @@ async def test_process_one_task_reports_success(monkeypatch):
     client = AsyncMock()
     client.post = AsyncMock(return_value=pull_response)
 
+    tick = AsyncMock()
     monkeypatch.setattr(distributed_worker.scheduler, "submit_task", lambda payload: {"id": "local-1"})
-    monkeypatch.setattr(distributed_worker.scheduler, "tick", AsyncMock())
+    monkeypatch.setattr(distributed_worker.scheduler, "tick", tick)
     monkeypatch.setattr(distributed_worker.db, "get_task", lambda task_id: {"id": task_id, "status": "running"})
 
     processed = await distributed_worker.process_one_task(client, cfg, browser_mgr)
     assert processed is True
+    tick.assert_awaited_once_with(browser_mgr, task_id="local-1")
     calls = client.post.await_args_list
     assert calls[1].args[0] == "/api/master/tasks/t1/report"
     assert calls[2].kwargs["json"]["status"] == "success"

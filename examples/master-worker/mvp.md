@@ -8,6 +8,7 @@ cp config/servers.json.example config/servers.json
 ```
 
 按实际环境修改 `config/servers.json` 中的 `host`、`username`、`port`、`max_profiles`。
+公网多机调试时，`host` 应填写 Master 能访问到的 Worker 公网 IP 或内网 IP。
 
 ## 2. 启动 Master（本机）
 
@@ -34,6 +35,14 @@ cp config/provision.json.example config/provision.json
 ```
 
 按目标环境修改 `config/provision.json` 中的 `bootstrap_cmd` 和 `start_cmd`。
+公网部署至少要让 Worker 能回连 Master，并让 Master 能回访 Worker API：
+
+```bash
+export MASTER_PROVISION_MASTER_BASE_URL=http://<master-public-ip>:8080
+export MASTER_PROVISION_WORKER_API_BASE=http://{host}:8080
+```
+
+`config/provision.json.example` 的默认 `start_cmd` 会把上述值写入 Worker 容器的 `MASTER_BASE_URL` 和 `WORKER_API_BASE`。
 
 如需调整注册校验窗口，可同时修改 `verify_wait_seconds` 和 `verify_interval_seconds`。
 
@@ -99,3 +108,14 @@ curl -sS -X POST http://127.0.0.1:8080/api/master/tasks/TASK_ID/report \
 python3 -m master_backend.cli --base-url http://127.0.0.1:8080 cluster
 python3 -m master_backend.cli --base-url http://127.0.0.1:8080 tasks
 ```
+
+## 8. 公网端口
+
+公网调试时，Master 前端/API 和 Worker 前端/API 都走 `8080/tcp`：
+
+```text
+Master: http://<master-public-ip>:8080
+Worker: http://<worker-public-ip>:8080
+```
+
+Worker 的 VNC 也通过 `8080` 上的 WebSocket 代理访问，不需要额外开放 KasmVNC 内部的 `6100+` 端口。

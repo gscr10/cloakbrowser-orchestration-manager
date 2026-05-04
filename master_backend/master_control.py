@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -24,6 +25,7 @@ PROVISION_TIMEOUT_SECONDS = int(os.environ.get("MASTER_PROVISION_TIMEOUT_SECONDS
 PROVISION_MAX_PARALLEL = int(os.environ.get("MASTER_PROVISION_MAX_PARALLEL", "4"))
 PROVISION_WORKER_IMAGE = os.environ.get("MASTER_PROVISION_WORKER_IMAGE", "ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest")
 PROVISION_MASTER_BASE_URL = os.environ.get("MASTER_PROVISION_MASTER_BASE_URL", "http://host.docker.internal:8080")
+PROVISION_WORKER_API_BASE = os.environ.get("MASTER_PROVISION_WORKER_API_BASE", "http://{host}:8080")
 PROVISION_BOOTSTRAP_CMD = os.environ.get(
     "MASTER_PROVISION_BOOTSTRAP_CMD",
     f"set -e; mkdir -p /opt/cloak-manager-worker/config; docker --version >/dev/null 2>&1; docker pull {PROVISION_WORKER_IMAGE}",
@@ -33,6 +35,7 @@ PROVISION_START_CMD = os.environ.get(
     "set -e; "
     "docker rm -f cloak-manager-worker >/dev/null 2>&1 || true; "
     "docker run -d --name cloak-manager-worker --restart unless-stopped "
+    "--shm-size=512m "
     "--add-host host.docker.internal:host-gateway "
     "-p 8080:8080 "
     "-v cloak-manager-data:/data "
@@ -43,6 +46,7 @@ PROVISION_START_CMD = os.environ.get(
     "-e MAX_RUNNING_PROFILES={max_profiles} "
     "-e WORKER_NODE_ID={node_id} "
     "-e MASTER_BASE_URL={master_base_url} "
+    "-e WORKER_API_BASE={worker_api_base} "
     "-e AUTH_TOKEN={auth_token} "
     f"{PROVISION_WORKER_IMAGE}",
 )
@@ -135,6 +139,20 @@ def load_provision_config() -> ProvisionConfig:
         raw = json.loads(PROVISION_CONFIG_PATH.read_text(encoding="utf-8"))
         return ProvisionConfig(timeout_seconds=int(raw.get("timeout_seconds") or PROVISION_TIMEOUT_SECONDS), max_parallel=max(1, int(raw.get("max_parallel") or PROVISION_MAX_PARALLEL)), bootstrap_cmd=str(raw.get("bootstrap_cmd") or PROVISION_BOOTSTRAP_CMD), start_cmd=str(raw.get("start_cmd") or PROVISION_START_CMD), verify_wait_seconds=int(raw.get("verify_wait_seconds") or PROVISION_VERIFY_WAIT_SECONDS), verify_interval_seconds=float(raw.get("verify_interval_seconds") or PROVISION_VERIFY_INTERVAL_SECONDS))
     return ProvisionConfig(timeout_seconds=PROVISION_TIMEOUT_SECONDS, max_parallel=max(1, PROVISION_MAX_PARALLEL), bootstrap_cmd=PROVISION_BOOTSTRAP_CMD, start_cmd=PROVISION_START_CMD, verify_wait_seconds=PROVISION_VERIFY_WAIT_SECONDS, verify_interval_seconds=PROVISION_VERIFY_INTERVAL_SECONDS)
+
+
+def _template_values(record: ServerRecord, auth_token: str) -> dict[str, str]:
+    raw_values = {
+        "node_id": record.node_id,
+        "host": record.host,
+        "username": record.username,
+        "max_profiles": str(record.max_profiles),
+        "master_base_url": PROVISION_MASTER_BASE_URL,
+        "auth_token": auth_token,
+    }
+    worker_api_base = PROVISION_WORKER_API_BASE.format(**raw_values)
+    raw_values["worker_api_base"] = worker_api_base
+    return {key: shlex.quote(str(value)) for key, value in raw_values.items()}
 
 
 def _parse_ts(value: str | None) -> dt.datetime | None:
@@ -276,22 +294,9 @@ def execute_provision(record: ServerRecord, dry_run: bool, cfg: ProvisionConfig)
     if dry_run:
         return True, "dry-run"
     auth_token = os.environ.get("AUTH_TOKEN") or ""
-    bootstrap_cmd = cfg.bootstrap_cmd.format(
-        node_id=record.node_id,
-        host=record.host,
-        username=record.username,
-        max_profiles=record.max_profiles,
-        master_base_url=PROVISION_MASTER_BASE_URL,
-        auth_token=auth_token,
-    )
-    start_cmd = cfg.start_cmd.format(
-        node_id=record.node_id,
-        host=record.host,
-        username=record.username,
-        max_profiles=record.max_profiles,
-        master_base_url=PROVISION_MASTER_BASE_URL,
-        auth_token=auth_token,
-    )
+    values = _template_values(record, auth_token)
+    bootstrap_cmd = cfg.bootstrap_cmd.format(**values)
+    start_cmd = cfg.start_cmd.format(**values)
     remote_cmd = f"{bootstrap_cmd}; {start_cmd}"
     cmd, env = _build_ssh_exec(record, remote_cmd)
     askpass_path = env.get("SSH_ASKPASS") if env else None
