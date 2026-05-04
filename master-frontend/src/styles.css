@@ -49,6 +49,8 @@ input, select, textarea {
   padding: 8px;
 }
 
+.token-input { min-width: 240px; }
+
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { border-bottom: 1px solid #253654; padding: 8px; text-align: left; }
 th { color: #9eb1cf; font-weight: 600; }

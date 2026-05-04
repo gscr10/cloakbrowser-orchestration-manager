@@ -580,7 +580,7 @@ npm run dev -- --host 0.0.0.0 --port 5174
 - Master API: `http://127.0.0.1:8080`
 - Worker API: `http://127.0.0.1:8081`
 
-若只需快速联调后端双进程，也可直接运行：
+若需快速联调 Master+Worker 并同时启动 Master 前端，也可直接运行：
 
 ```bash
 ./examples/master-worker/run_local.sh
@@ -589,10 +589,11 @@ npm run dev -- --host 0.0.0.0 --port 5174
 ./examples/master-worker/run_local.sh --env-file ./examples/master-worker/env.local.sample
 ```
 
-前端 API 代理环境变量：
+Master 前端 API 代理环境变量：
 
-- `worker-frontend/.env.example` 使用 `VITE_API_PROXY_TARGET=http://127.0.0.1:8081`
 - `master-frontend/.env.example` 使用 `VITE_API_PROXY_TARGET=http://127.0.0.1:8080`
+
+当启用 `AUTH_TOKEN` 时，可在 Master 前端右上角输入并保存 Token，前端会自动附带 `Authorization: Bearer <token>` 请求头。
 
 如果不设置该变量，两个前端都默认代理到 `http://localhost:8080`。
 

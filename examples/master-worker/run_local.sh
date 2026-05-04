@@ -49,6 +49,7 @@ MASTER_PORT="${MASTER_PORT:-8080}"
 WORKER_PORT="${WORKER_PORT:-8081}"
 MASTER_FRONTEND_PORT="${MASTER_FRONTEND_PORT:-5174}"
 MASTER_HOST="${MASTER_HOST:-127.0.0.1}"
+MASTER_FRONTEND_API_PROXY="${MASTER_FRONTEND_API_PROXY:-http://${MASTER_HOST}:${MASTER_PORT}}"
 
 if [[ -d "${ROOT_DIR}/.venv" ]]; then
   # shellcheck disable=SC1091
@@ -84,7 +85,7 @@ WORKER_PID=$!
 echo "Starting master frontend on ${MASTER_HOST}:${MASTER_FRONTEND_PORT}"
 (
   cd "${ROOT_DIR}/master-frontend"
-  npm run dev -- --host "${MASTER_HOST}" --port "${MASTER_FRONTEND_PORT}"
+  VITE_API_PROXY_TARGET="${MASTER_FRONTEND_API_PROXY}" npm run dev -- --host "${MASTER_HOST}" --port "${MASTER_FRONTEND_PORT}"
 ) &
 FRONTEND_PID=$!
 

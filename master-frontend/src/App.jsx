@@ -13,6 +13,7 @@ async function api(path, options = {}) {
 }
 
 export default function App() {
+  const [token, setToken] = useState(() => window.localStorage.getItem("master_token") || "");
   const [nodes, setNodes] = useState([]);
   const [cluster, setCluster] = useState(null);
   const [tasks, setTasks] = useState([]);
@@ -29,6 +30,14 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [taskDetail, setTaskDetail] = useState(null);
   const [feishuCheck, setFeishuCheck] = useState(null);
+
+  const authedApi = async (path, options = {}) => {
+    const nextHeaders = { ...(options.headers || {}) };
+    if (token.trim()) {
+      nextHeaders.Authorization = `Bearer ${token.trim()}`;
+    }
+    return api(path, { ...options, headers: nextHeaders });
+  };
 
   const [newTask, setNewTask] = useState({
     profile_id: "",
@@ -67,12 +76,12 @@ export default function App() {
     setLoading(true);
     try {
       const [nextNodes, nextCluster, nextTasks, nextProviders, nextJobs, nextServers] = await Promise.all([
-        api("/api/master/nodes"),
-        api("/api/master/cluster/status"),
-        api("/api/master/tasks"),
-        api("/api/master/providers"),
-        api("/api/master/provision/jobs"),
-        api("/api/master/provision/servers")
+        authedApi("/api/master/nodes"),
+        authedApi("/api/master/cluster/status"),
+        authedApi("/api/master/tasks"),
+        authedApi("/api/master/providers"),
+        authedApi("/api/master/provision/jobs"),
+        authedApi("/api/master/provision/servers")
       ]);
       setNodes(nextNodes);
       setCluster(nextCluster);
@@ -99,8 +108,8 @@ export default function App() {
   useEffect(() => {
     if (!selectedTaskId) return;
     Promise.all([
-      api(`/api/master/tasks/${selectedTaskId}/events`),
-      api(`/api/master/tasks/${selectedTaskId}`)
+      authedApi(`/api/master/tasks/${selectedTaskId}/events`),
+      authedApi(`/api/master/tasks/${selectedTaskId}`)
     ]).then(([nextEvents, nextTask]) => {
       setEvents(nextEvents);
       setTaskDetail(nextTask);
@@ -124,13 +133,13 @@ export default function App() {
       timeout_seconds: Number(newTask.timeout_seconds) || 300,
       max_retries: Number(newTask.max_retries) || 1
     };
-    await api("/api/master/tasks", { method: "POST", body: JSON.stringify(payload) });
+    await authedApi("/api/master/tasks", { method: "POST", body: JSON.stringify(payload) });
     setNotice("任务已创建");
     await refreshCore();
   };
 
   const runProvision = async (dryRun) => {
-    const result = await api("/api/master/provision/run", {
+    const result = await authedApi("/api/master/provision/run", {
       method: "POST",
       body: JSON.stringify({ dry_run: dryRun })
     });
@@ -144,7 +153,7 @@ export default function App() {
   };
 
   const setProvider = async (provider) => {
-    await api("/api/master/providers/active", {
+    await authedApi("/api/master/providers/active", {
       method: "PUT",
       body: JSON.stringify({ provider })
     });
@@ -153,8 +162,18 @@ export default function App() {
   };
 
   const validateFeishu = async () => {
-    const result = await api("/api/master/providers/feishu-cli/validate", { method: "POST" });
+    const result = await authedApi("/api/master/providers/feishu-cli/validate", { method: "POST" });
     setFeishuCheck(result);
+  };
+
+  const saveToken = () => {
+    if (token.trim()) {
+      window.localStorage.setItem("master_token", token.trim());
+      setNotice("Token 已保存");
+      return;
+    }
+    window.localStorage.removeItem("master_token");
+    setNotice("Token 已清空");
   };
 
   const statusText = (value) => ({
@@ -177,7 +196,11 @@ export default function App() {
           <h1>Master Console</h1>
           <p>独立 Master 控制台（不复用 Worker 前端）</p>
         </div>
-        <button onClick={refreshCore} disabled={loading}>{loading ? "刷新中..." : "刷新"}</button>
+        <div className="row">
+          <input className="token-input" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="AUTH_TOKEN（可选）" />
+          <button onClick={saveToken}>保存 Token</button>
+          <button onClick={refreshCore} disabled={loading}>{loading ? "刷新中..." : "刷新"}</button>
+        </div>
       </header>
 
       {error && <div className="error">{error}</div>}
