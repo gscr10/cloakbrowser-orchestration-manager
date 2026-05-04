@@ -26,6 +26,9 @@ export default function App() {
   const [showEnabledOnly, setShowEnabledOnly] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [taskDetail, setTaskDetail] = useState(null);
+  const [feishuCheck, setFeishuCheck] = useState(null);
 
   const [newTask, setNewTask] = useState({
     profile_id: "",
@@ -39,8 +42,20 @@ export default function App() {
   const totals = useMemo(() => {
     const online = nodes.filter((n) => n.status === "online").length;
     const stale = nodes.filter((n) => n.status === "stale").length;
-    return { online, stale, total: nodes.length };
+    const offline = nodes.filter((n) => n.status === "offline").length;
+    const queued = cluster?.tasks?.queued ?? 0;
+    const dispatched = cluster?.tasks?.dispatched ?? 0;
+    const running = cluster?.tasks?.running ?? 0;
+    return { online, stale, offline, queued, dispatched, running, total: nodes.length };
   }, [nodes]);
+
+  const taskStats = useMemo(() => {
+    return {
+      success: tasks.filter((t) => t.status === "success").length,
+      failed: tasks.filter((t) => t.status === "failed").length,
+      running: tasks.filter((t) => t.status === "running").length
+    };
+  }, [tasks]);
 
   const visibleProvisionServers = useMemo(() => {
     const servers = provisionServers.servers || [];
@@ -83,7 +98,16 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedTaskId) return;
-    api(`/api/master/tasks/${selectedTaskId}/events`).then(setEvents).catch(() => setEvents([]));
+    Promise.all([
+      api(`/api/master/tasks/${selectedTaskId}/events`),
+      api(`/api/master/tasks/${selectedTaskId}`)
+    ]).then(([nextEvents, nextTask]) => {
+      setEvents(nextEvents);
+      setTaskDetail(nextTask);
+    }).catch(() => {
+      setEvents([]);
+      setTaskDetail(null);
+    });
   }, [selectedTaskId]);
 
   useEffect(() => {
@@ -101,6 +125,7 @@ export default function App() {
       max_retries: Number(newTask.max_retries) || 1
     };
     await api("/api/master/tasks", { method: "POST", body: JSON.stringify(payload) });
+    setNotice("任务已创建");
     await refreshCore();
   };
 
@@ -114,6 +139,7 @@ export default function App() {
       setSelectedJobId(nextJobId);
       setJobDetail(result);
     }
+    setNotice(dryRun ? "演练任务已提交" : "部署任务已提交");
     await refreshCore();
   };
 
@@ -122,8 +148,27 @@ export default function App() {
       method: "PUT",
       body: JSON.stringify({ provider })
     });
+    setNotice(`已切换提供方：${provider}`);
     await refreshCore();
   };
+
+  const validateFeishu = async () => {
+    const result = await api("/api/master/providers/feishu-cli/validate", { method: "POST" });
+    setFeishuCheck(result);
+  };
+
+  const statusText = (value) => ({
+    queued: "排队中",
+    dispatched: "已下发",
+    running: "执行中",
+    success: "成功",
+    failed: "失败",
+    online: "在线",
+    stale: "过期",
+    offline: "离线",
+    degraded: "降级",
+    partial_success: "部分成功"
+  }[value] || value || "-");
 
   return (
     <div className="page">
@@ -132,50 +177,57 @@ export default function App() {
           <h1>Master Console</h1>
           <p>独立 Master 控制台（不复用 Worker 前端）</p>
         </div>
-        <button onClick={refreshCore} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</button>
+        <button onClick={refreshCore} disabled={loading}>{loading ? "刷新中..." : "刷新"}</button>
       </header>
 
       {error && <div className="error">{error}</div>}
+      {notice && <div className="notice">{notice}</div>}
 
       <section className="cards">
-        <div className="card"><span>Nodes</span><strong>{totals.total}</strong></div>
-        <div className="card"><span>Online</span><strong>{totals.online}</strong></div>
-        <div className="card"><span>Stale</span><strong>{totals.stale}</strong></div>
-        <div className="card"><span>Queued</span><strong>{cluster?.tasks?.queued ?? 0}</strong></div>
+        <div className="card"><span>节点总数</span><strong>{totals.total}</strong></div>
+        <div className="card"><span>在线节点</span><strong>{totals.online}</strong></div>
+        <div className="card"><span>离线节点</span><strong>{totals.offline}</strong></div>
+        <div className="card"><span>过期心跳</span><strong>{totals.stale}</strong></div>
+        <div className="card"><span>排队任务</span><strong>{totals.queued}</strong></div>
+        <div className="card"><span>下发任务</span><strong>{totals.dispatched}</strong></div>
+        <div className="card"><span>执行中任务</span><strong>{totals.running}</strong></div>
+        <div className="card"><span>成功/失败</span><strong>{taskStats.success}/{taskStats.failed}</strong></div>
       </section>
 
       <section className="grid two">
         <div className="panel">
-          <h2>Providers</h2>
-          <p>Active: <b>{providers.active || "-"}</b></p>
+          <h2>提供方</h2>
+          <p>当前：<b>{providers.active || "-"}</b></p>
           <div className="row wrap">
             {providers.providers?.map((name) => (
               <button key={name} onClick={() => setProvider(name)}>{name}</button>
             ))}
+            <button onClick={validateFeishu}>校验 feishu_cli</button>
           </div>
+          {feishuCheck && <p>校验结果：{feishuCheck.ready ? "可用" : "未就绪"}（{feishuCheck.message || "-"}）</p>}
         </div>
 
         <div className="panel">
-          <h2>Provision</h2>
-          <p>Provider: <b>{provisionServers.provider || providers.active || "-"}</b></p>
-          <p>Servers: <b>{provisionServers.servers?.length || 0}</b></p>
+          <h2>批量部署</h2>
+          <p>提供方：<b>{provisionServers.provider || providers.active || "-"}</b></p>
+          <p>服务器数：<b>{provisionServers.servers?.length || 0}</b></p>
           <div className="row">
-            <button onClick={() => runProvision(true)}>Run Dry-Run</button>
-            <button className="warn" onClick={() => runProvision(false)}>Run Deploy</button>
+            <button onClick={() => runProvision(true)}>执行演练</button>
+            <button className="warn" onClick={() => runProvision(false)}>执行部署</button>
           </div>
         </div>
       </section>
 
       <section className="grid two">
         <div className="panel">
-          <h2>Nodes</h2>
+          <h2>节点</h2>
           <table>
-            <thead><tr><th>Node</th><th>Status</th><th>Load</th><th>Mem</th></tr></thead>
+            <thead><tr><th>节点</th><th>状态</th><th>负载</th><th>内存</th></tr></thead>
             <tbody>
               {nodes.map((n) => (
                 <tr key={n.node_id}>
                   <td>{n.node_id}</td>
-                  <td>{n.status}</td>
+                  <td>{statusText(n.status)}</td>
                   <td>{n.running_profiles}/{n.max_profiles}</td>
                   <td>{n.mem_used_mb || 0}/{n.mem_total_mb || 0} MB</td>
                 </tr>
@@ -185,43 +237,43 @@ export default function App() {
         </div>
 
         <div className="panel">
-          <h2>Create Master Task</h2>
+          <h2>创建 Master 任务</h2>
           <div className="form">
-            <input value={newTask.profile_id} onChange={(e) => setNewTask({ ...newTask, profile_id: e.target.value })} placeholder="profile_id (optional)" />
+            <input value={newTask.profile_id} onChange={(e) => setNewTask({ ...newTask, profile_id: e.target.value })} placeholder="profile_id（可选）" />
             <input value={newTask.authorized_target} onChange={(e) => setNewTask({ ...newTask, authorized_target: e.target.value })} placeholder="authorized_target" />
             <select value={newTask.task_type} onChange={(e) => setNewTask({ ...newTask, task_type: e.target.value })}>
               <option value="open_url">open_url</option>
               <option value="external_cdp">external_cdp</option>
             </select>
-            <input value={newTask.url} onChange={(e) => setNewTask({ ...newTask, url: e.target.value })} placeholder="url (open_url only)" />
+            <input value={newTask.url} onChange={(e) => setNewTask({ ...newTask, url: e.target.value })} placeholder="url（仅 open_url）" />
             <div className="row">
-              <input type="number" value={newTask.timeout_seconds} onChange={(e) => setNewTask({ ...newTask, timeout_seconds: e.target.value })} placeholder="timeout" />
-              <input type="number" value={newTask.max_retries} onChange={(e) => setNewTask({ ...newTask, max_retries: e.target.value })} placeholder="max_retries" />
+              <input type="number" value={newTask.timeout_seconds} onChange={(e) => setNewTask({ ...newTask, timeout_seconds: e.target.value })} placeholder="超时秒数" />
+              <input type="number" value={newTask.max_retries} onChange={(e) => setNewTask({ ...newTask, max_retries: e.target.value })} placeholder="最大重试" />
             </div>
-            <button onClick={createTask}>Create Task</button>
+            <button onClick={createTask}>创建任务</button>
           </div>
         </div>
       </section>
 
-      <section className="grid two">
+      <section className="grid three">
         <div className="panel">
-          <h2>Provision Servers</h2>
+          <h2>部署服务器列表</h2>
           <div className="row between">
-            <p>Showing: <b>{visibleProvisionServers.length}</b> / {provisionServers.servers?.length || 0}</p>
+            <p>显示：<b>{visibleProvisionServers.length}</b> / {provisionServers.servers?.length || 0}</p>
             <label className="checkbox">
               <input type="checkbox" checked={showEnabledOnly} onChange={(e) => setShowEnabledOnly(e.target.checked)} />
-              enabled only
+              仅启用
             </label>
           </div>
           <table>
-            <thead><tr><th>Node</th><th>Host</th><th>User</th><th>Status</th></tr></thead>
+            <thead><tr><th>节点</th><th>主机</th><th>用户</th><th>状态</th></tr></thead>
             <tbody>
               {visibleProvisionServers.map((s) => (
                 <tr key={s.node_id}>
                   <td>{s.node_id}</td>
                   <td>{s.host}:{s.port}</td>
                   <td>{s.username}</td>
-                  <td>{s.enabled ? "enabled" : "disabled"}</td>
+                  <td>{s.enabled ? "启用" : "禁用"}</td>
                 </tr>
               ))}
             </tbody>
@@ -229,13 +281,20 @@ export default function App() {
         </div>
 
         <div className="panel">
-          <h2>Master Tasks</h2>
+          <h2>Master 任务</h2>
           <select value={selectedTaskId} onChange={(e) => setSelectedTaskId(e.target.value)}>
-            <option value="">Select task</option>
+            <option value="">选择任务</option>
             {tasks.map((t) => (
-              <option key={t.id} value={t.id}>{t.id.slice(0, 8)} | {t.status} | {t.target_node_id || "unassigned"}</option>
+              <option key={t.id} value={t.id}>{t.id.slice(0, 8)} | {statusText(t.status)} | {t.target_node_id || "未分配"}</option>
             ))}
           </select>
+          <div className="detail">
+            <p>详情状态：<b>{statusText(taskDetail?.status)}</b></p>
+            <p>节点：<b>{taskDetail?.target_node_id || "-"}</b></p>
+            <p>类型：<b>{taskDetail?.task_type || "-"}</b></p>
+            <p>URL：<b>{taskDetail?.payload?.url || "-"}</b></p>
+            <p>失败原因：<b>{taskDetail?.failure_reason || "-"}</b></p>
+          </div>
           <div className="list">
             {events.map((ev) => (
               <div key={ev.id} className="item">
@@ -248,18 +307,24 @@ export default function App() {
         </div>
 
         <div className="panel">
-          <h2>Provision Jobs</h2>
+          <h2>部署任务</h2>
           <select value={selectedJobId} onChange={(e) => setSelectedJobId(e.target.value)}>
-            <option value="">Select job</option>
+            <option value="">选择任务</option>
             {jobs.map((j) => (
-              <option key={j.id} value={j.id}>{j.id.slice(0, 8)} | {j.status}</option>
+              <option key={j.id} value={j.id}>{j.id.slice(0, 8)} | {statusText(j.status)}</option>
             ))}
           </select>
+          <div className="detail">
+            <p>任务状态：<b>{statusText(jobDetail?.job?.status)}</b></p>
+            <p>成功/失败：<b>{jobDetail?.job?.success_count ?? 0}/{jobDetail?.job?.failed_count ?? 0}</b></p>
+            <p>总数：<b>{jobDetail?.job?.total_servers ?? 0}</b></p>
+            <p>模式：<b>{jobDetail?.job?.dry_run ? "演练" : "真实部署"}</b></p>
+          </div>
           <div className="list">
             {jobDetail?.items?.map((it) => (
               <div key={it.id} className="item">
                 <b>{it.node_id}</b>
-                <span>{it.status}</span>
+                <span>{statusText(it.status)}</span>
                 <p>{it.message || ""}</p>
               </div>
             ))}

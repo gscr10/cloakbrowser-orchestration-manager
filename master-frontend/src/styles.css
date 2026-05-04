@@ -16,14 +16,16 @@ button.warn { background: #d04e2d; }
 button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .error { background: #3a1d1d; border: 1px solid #8a3232; border-radius: 10px; padding: 10px; margin-bottom: 14px; }
+.notice { background: #173223; border: 1px solid #2d7a52; border-radius: 10px; padding: 10px; margin-bottom: 14px; color: #baf5d2; }
 
-.cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.cards { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
 .card { background: #111a2c; border: 1px solid #24334f; border-radius: 12px; padding: 12px; }
 .card span { color: #97a9c4; font-size: 12px; }
 .card strong { display: block; margin-top: 8px; font-size: 22px; }
 
 .grid { display: grid; gap: 10px; margin-bottom: 10px; }
 .grid.two { grid-template-columns: 1fr 1fr; }
+.grid.three { grid-template-columns: 1fr 1fr 1fr; }
 
 .panel { background: #111a2c; border: 1px solid #24334f; border-radius: 12px; padding: 12px; }
 .panel h2 { margin: 0 0 10px; font-size: 16px; }
@@ -35,6 +37,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .checkbox { display: inline-flex; align-items: center; gap: 6px; color: #9eb1cf; font-size: 12px; }
 .checkbox input { width: auto; }
 .panel p { margin: 4px 0; color: #9eb1cf; }
+.detail { margin-top: 8px; padding: 8px; border: 1px solid #23395c; border-radius: 8px; background: #0d182b; }
 
 .form { display: grid; gap: 8px; }
 input, select, textarea {
@@ -58,4 +61,5 @@ th { color: #9eb1cf; font-weight: 600; }
 @media (max-width: 980px) {
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid.two { grid-template-columns: 1fr; }
+  .grid.three { grid-template-columns: 1fr; }
 }
