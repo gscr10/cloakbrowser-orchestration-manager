@@ -46,3 +46,79 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
 - Instructions:
   - open_url 任务在未提供 URL，或 URL 只包含空白字符时，默认使用 `https://www.baidu.com`。
   - open_url 任务在明确提供 URL 时，必须保留并使用用户提供的 URL，而不是覆盖成默认值。
+
+[分布式演进与部署方式偏好]
+- Date: 2026-05-04
+- Context: 用户要求实现最小分布式架构（1 master + 2 worker 起步），并明确希望采用更快的实现路径
+- Instructions:
+  - 架构长期约束为 `1 台服务器 = 1 个 worker`。
+  - 先实现最小可用版本，重点验证功能闭环，再做后续优化。
+  - 初始化和部署先采用 Ansible-less 路径，由 master 直接编排。
+  - 飞书能力当前只保留接口，暂不实现真实拉取逻辑，后续倾向使用飞书 CLI。
+  - 在开发阶段可使用模拟服务器列表与模拟执行结果补充测试。
+
+[批量初始化必须支持真实执行]
+- Date: 2026-05-04
+- Context: 用户确认需要从 dry-run 演进到可实际使用的一键部署能力
+- Instructions:
+  - `provision-run` 需要支持 non dry-run，通过 SSH 在远程服务器真实执行初始化和启动命令。
+  - 命令执行流程应可配置，便于后续按环境调整部署模板。
+
+[默认自动推进开发与测试]
+- Date: 2026-05-04
+- Context: 用户要求后续无需反复征求意见，默认自动执行开发与验证
+- Instructions:
+  - 对后续任务默认自动开发、自动测试、自动修复并持续推进到可交付结果。
+  - 非必要不再逐步询问用户确认；仅在高风险、不可逆或安全敏感操作前再提示。
+
+[连续执行直至任务清零]
+- Date: 2026-05-04
+- Context: 用户要求每个任务结束后不要停顿，自动完成剩余需求并仅给最终汇总
+- Instructions:
+  - 每个子任务完成后立即继续后续未完成任务，不在中间阶段停下来等待指示。
+  - 持续自动开发、自动测试、自动修复，直到当前需求集合全部完成。
+  - 对用户输出以最终结果为主，减少过程性汇报。
+
+[按用户清单一次性完成并仅最终汇总]
+- Date: 2026-05-04
+- Context: 用户要求对明确给出的 Todo 清单直接全部处理完，不要中途停顿
+- Instructions:
+  - 接到明确的执行清单后，按列表顺序连续实现并验证，不在中间阶段请求确认。
+  - 全部任务完成后再统一输出最终结果。
+
+[Master 与 Worker 代码必须解耦]
+- Date: 2026-05-04
+- Context: 用户明确要求后续部署为单独 Master 节点 + 多 Worker 节点，除业务通信外代码不得混杂
+- Instructions:
+  - Master 与 Worker 除 API/协议通信外，代码结构必须独立，避免共享同一应用入口和同一前端。
+  - Master 作为独立部署单元，Worker 作为独立部署单元；后续开发按两套代码组织推进。
+
+[镜像发布约定]
+- Date: 2026-05-04
+- Context: Agent 在执行 GitHub 预构建双镜像流水线改造时发现
+- Category: 构建方法
+- Instructions:
+  - GHCR 发布采用双镜像命名：`ghcr.io/<repo>-worker` 与 `ghcr.io/<repo>-master`。
+  - `worker` 镜像使用仓库根目录 `Dockerfile`，`master` 镜像使用 `Dockerfile.master`。
+
+[Worker 远程部署模板约定]
+- Date: 2026-05-04
+- Context: Agent 在执行 Master 一键部署 Worker 能力增强时发现
+- Category: 代码模式
+- Instructions:
+  - Provision 命令模板除基础字段外，支持 `{master_base_url}` 与 `{auth_token}` 占位符，用于 Worker 自动回连与鉴权。
+  - 默认部署镜像为 `ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest`，并通过 `MASTER_PROVISION_WORKER_IMAGE` 覆盖。
+
+[默认无确认连续完成]
+- Date: 2026-05-04
+- Context: 用户要求后续执行不再中途确认，直接完成所有未完成任务
+- Instructions:
+  - 不再就实现细节进行中途确认，直接连续实现剩余任务并完成验证。
+  - 输出以最终结果为主，除阻塞问题外不暂停等待用户指示。
+
+[Master 启动联动前端]
+- Date: 2026-05-04
+- Context: 用户要求每次启动 Master 必须同时启动 Master 前端
+- Instructions:
+  - 启动 Master 后端时，必须同步启动 `master-frontend`，保证控制台可直接访问。
+  - 清理并重测时按全新环境处理：允许删除旧数据、旧容器、旧预览进程。

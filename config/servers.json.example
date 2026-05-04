@@ -1,0 +1,23 @@
+{
+  "servers": [
+    {
+      "node_id": "worker-a",
+      "host": "10.0.0.10",
+      "username": "root",
+      "port": 22,
+      "max_profiles": 10,
+      "tags": ["cn", "residential"],
+      "enabled": true
+    },
+    {
+      "node_id": "worker-b",
+      "host": "10.0.0.11",
+      "username": "root",
+      "password": "replace-with-real-password",
+      "port": 22,
+      "max_profiles": 10,
+      "tags": ["sg", "datacenter"],
+      "enabled": true
+    }
+  ]
+}
