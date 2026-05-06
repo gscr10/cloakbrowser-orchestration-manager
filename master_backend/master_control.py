@@ -51,7 +51,6 @@ PROVISION_START_CMD = os.environ.get(
     "-e CONFIG_IMPORT_ON_START=true "
     "-e CONFIG_DIR=/config "
     "-e DISTRIBUTED_WORKER_ENABLED=true "
-    "-e MAX_RUNNING_PROFILES={max_profiles} "
     "-e WORKER_NODE_ID={node_id} "
     "-e MASTER_BASE_URL={master_base_url} "
     "-e WORKER_API_BASE={worker_api_base} "
