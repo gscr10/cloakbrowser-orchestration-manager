@@ -83,7 +83,9 @@ export MASTER_PUBLIC_IP=<master-public-ip>
 cp config/servers.json.example config/servers.json
 cp config/provision.json.example config/provision.json
 
-# config/servers.json 里填写 Worker 公网 IP、SSH 用户、端口和 max_profiles。
+# config/servers.json 里填写 Worker 公网 IP、SSH 用户和端口。
+# max_profiles 只作为 Master 调度容量提示；Worker 容器默认不注入 MAX_RUNNING_PROFILES，
+# 会使用自身 auto/15 上限并在启动 Profile 时做资源压力检查。
 export MASTER_PROVISION_MASTER_BASE_URL="http://${MASTER_PUBLIC_IP}:8080"
 export MASTER_PROVISION_WORKER_API_BASE="http://{host}:8080"
 ```
@@ -435,6 +437,7 @@ await page.goto("https://example.com");
 模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`、`{master_base_url}`、`{worker_api_base}`、`{auth_token}`。
 
 默认模板会先尝试当前 SSH 用户直接访问 Docker daemon；如果失败，会自动改用 `sudo -n docker`。远端用户需要具备无交互 sudo 权限，否则 non dry-run 会失败并返回远端错误。
+默认模板不会向 Worker 容器注入 `MAX_RUNNING_PROFILES`，因此 Worker 使用自身 `auto` 上限（最多 15）并在每次启动 Profile 前做资源压力检查。`servers.json` 中的 `max_profiles` 仅作为 Master 调度容量提示；如果需要硬性限制某台 Worker，可在自定义 `MASTER_PROVISION_START_CMD` 中显式增加 `-e MAX_RUNNING_PROFILES=<n>`。
 
 `host.docker.internal` 只适合 Master/Worker 在本地 Docker 环境互访的调试场景；公网部署应始终显式设置 `MASTER_PROVISION_MASTER_BASE_URL`。
 

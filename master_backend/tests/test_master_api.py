@@ -574,6 +574,7 @@ def test_master_provision_default_start_command_sets_public_worker_api(master_ap
     assert "--shm-size=512m" in remote_cmd
     assert "-e MASTER_BASE_URL=http://198.51.100.20:8080" in remote_cmd
     assert "-e WORKER_API_BASE=http://203.0.113.10:8080" in remote_cmd
+    assert "MAX_RUNNING_PROFILES" not in remote_cmd
 
 
 def test_master_provision_uses_config_file(master_app_client: TestClient, tmp_path: Path, monkeypatch):
