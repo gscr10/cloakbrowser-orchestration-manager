@@ -22,6 +22,13 @@ def test_list_profiles_empty(app_client: TestClient):
     assert resp.json() == []
 
 
+def test_list_automation_templates(app_client: TestClient):
+    resp = app_client.get("/api/automation/templates")
+    assert resp.status_code == 200
+    templates = resp.json()["templates"]
+    assert {"script_key": "open_url", "script_version": "v1", "input_schema_version": "v1"} in templates
+
+
 def test_spa_index_disables_html_cache(app_client: TestClient):
     resp = app_client.get("/")
     assert resp.status_code == 200

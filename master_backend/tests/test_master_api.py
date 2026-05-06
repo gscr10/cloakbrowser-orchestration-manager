@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from starlette.testclient import TestClient
 
-from master_backend import master_control
+from master_backend import biz_sync, infra_sync, master_control
 
 
 def test_master_node_register_and_heartbeat(master_app_client: TestClient):
@@ -52,6 +52,126 @@ def test_master_nodes_list_endpoint(master_app_client: TestClient):
     payload = listed.json()
     assert len(payload) >= 1
     assert payload[0]["node_id"] == "worker-a"
+
+
+def test_master_register_stores_worker_capabilities(master_app_client: TestClient):
+    register = master_app_client.post(
+        "/api/master/nodes/register",
+        json={
+            "node_id": "worker-a",
+            "hostname": "worker-a.local",
+            "max_profiles": 10,
+            "capabilities": [{"script_key": "open_url", "script_version": "v1"}],
+        },
+    )
+    assert register.status_code == 200
+
+    caps = master_app_client.get("/api/master/infra/capabilities")
+    assert caps.status_code == 200
+    assert caps.json() == [
+        {
+            "node_id": "worker-a",
+            "script_key": "open_url",
+            "script_version": "v1",
+            "input_schema_version": "v1",
+            "updated_at": caps.json()[0]["updated_at"],
+        }
+    ]
+
+
+def test_master_local_json_infra_sync(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    workers_path = tmp_path / "infra_workers.json"
+    workers_path.write_text(
+        json.dumps(
+            {
+                "workers": [
+                    {
+                        "node_id": "worker-json",
+                        "host": "10.0.0.20",
+                        "ssh_user": "root",
+                        "ssh_port": 2222,
+                        "desired_state": "active",
+                        "tags": ["kr", "ticket"],
+                        "worker_api_base": "http://10.0.0.20:8080",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(infra_sync, "INFRA_WORKERS_PATH", workers_path)
+
+    sync = master_app_client.post("/api/master/infra/sync")
+    assert sync.status_code == 200
+    assert sync.json()["count"] == 1
+
+    workers = master_app_client.get("/api/master/infra/workers")
+    assert workers.status_code == 200
+    assert workers.json()[0]["node_id"] == "worker-json"
+    assert workers.json()[0]["tags"] == ["kr", "ticket"]
+
+
+def test_master_local_json_biz_sync_and_schedule(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    workers_path = tmp_path / "infra_workers.json"
+    workers_path.write_text(
+        json.dumps(
+            {
+                "workers": [
+                    {
+                        "node_id": "worker-a",
+                        "host": "10.0.0.10",
+                        "tags": ["kr", "ticket"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    jobs_path = tmp_path / "biz_tasks.json"
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "job_key": "ticket-1",
+                        "source_record_id": "rec-1",
+                        "run_generation": 2,
+                        "script_key": "open_url",
+                        "script_version": "v1",
+                        "target_url": "https://example.com",
+                        "worker_tags": ["kr", "ticket"],
+                        "params": {"account": "demo"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(infra_sync, "INFRA_WORKERS_PATH", workers_path)
+    monkeypatch.setattr(biz_sync, "BIZ_TASKS_PATH", jobs_path)
+    assert master_app_client.post("/api/master/infra/sync").status_code == 200
+    master_app_client.post(
+        "/api/master/nodes/register",
+        json={
+            "node_id": "worker-a",
+            "hostname": "worker-a.local",
+            "max_profiles": 10,
+            "capabilities": [{"script_key": "open_url", "script_version": "v1"}],
+        },
+    )
+
+    sync = master_app_client.post("/api/master/biz/sync", json={"schedule": True})
+    assert sync.status_code == 200
+    data = sync.json()
+    assert data["count"] == 1
+    assert data["jobs"][0]["idempotency_key"] == "rec-1:2"
+    assert data["scheduled"][0]["assigned_worker"] == "worker-a"
+
+    tasks = master_app_client.get("/api/master/tasks").json()
+    task = tasks[0]
+    assert task["task_type"] == "automation_script"
+    assert task["payload"]["script_key"] == "open_url"
+    assert task["target_node_id"] == "worker-a"
 
 
 def test_master_create_pull_report_task(master_app_client: TestClient):

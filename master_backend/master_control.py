@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from . import database as db
+from . import infra_repository
 
 ACTIVE_PROVIDER_KEY = "master.active_provider"
 DEFAULT_PROVIDER = "static"
@@ -110,6 +111,32 @@ class StaticProvider(ServerProvider):
         return out
 
 
+class LocalJsonProvider(ServerProvider):
+    name = "local_json"
+
+    def get_servers(self) -> list[ServerRecord]:
+        from . import infra_sync
+
+        out = []
+        for item in infra_sync.local_infra_workers():
+            normalized = infra_sync.normalize_worker_record(item)
+            if not normalized:
+                continue
+            out.append(
+                ServerRecord(
+                    node_id=normalized["node_id"],
+                    host=normalized["host"],
+                    username=normalized["ssh_user"],
+                    port=normalized["ssh_port"],
+                    password=normalized.get("ssh_password"),
+                    max_profiles=normalized["max_profiles"],
+                    tags=normalized.get("tags") or [],
+                    enabled=bool(normalized.get("enabled", True)),
+                )
+            )
+        return out
+
+
 class FeishuCliProvider(ServerProvider):
     name = "feishu_cli"
 
@@ -118,7 +145,7 @@ class FeishuCliProvider(ServerProvider):
 
 
 def available_providers() -> dict[str, ServerProvider]:
-    return {"static": StaticProvider(), "feishu_cli": FeishuCliProvider()}
+    return {"static": StaticProvider(), "local_json": LocalJsonProvider(), "feishu_cli": FeishuCliProvider()}
 
 
 def get_active_provider_name() -> str:
@@ -213,7 +240,8 @@ def pick_target_node() -> dict[str, Any] | None:
 
 def create_master_task(payload: dict[str, Any]) -> dict[str, Any]:
     target = pick_target_node()
-    return db.create_master_task(profile_id=payload.get("profile_id"), authorized_target=payload["authorized_target"], task_type=payload["task_type"], payload=payload, timeout_seconds=int(payload.get("timeout_seconds") or 300), max_retries=int(payload.get("max_retries") or 1), target_node_id=target["node_id"] if target else None)
+    target_node_id = payload.get("target_node_id") or (target["node_id"] if target else None)
+    return db.create_master_task(profile_id=payload.get("profile_id"), authorized_target=payload["authorized_target"], task_type=payload["task_type"], payload=payload, timeout_seconds=int(payload.get("timeout_seconds") or 300), max_retries=int(payload.get("max_retries") or 1), target_node_id=target_node_id)
 
 
 def _fetch_worker_profile_id(node: dict[str, Any], timeout_seconds: float = 5.0) -> str | None:
@@ -261,7 +289,7 @@ def _create_worker_profile(node: dict[str, Any], timeout_seconds: float = 8.0) -
 
 
 def ensure_task_profile_for_node(task: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
-    if task.get("task_type") not in {"external_cdp", "open_url"}:
+    if task.get("task_type") not in {"external_cdp", "open_url", "automation_script"}:
         return task
     payload = dict(task.get("payload") or {})
     if (payload.get("profile_id") or "").strip():
@@ -301,6 +329,7 @@ def _build_ssh_exec(record: ServerRecord, remote_cmd: str) -> tuple[list[str], d
 
 def execute_provision(record: ServerRecord, dry_run: bool, cfg: ProvisionConfig) -> tuple[bool, str]:
     if dry_run:
+        infra_repository.create_event(record.node_id, "provision_dry_run", "provision dry-run skipped remote execution", "created")
         return True, "dry-run"
     auth_token = os.environ.get("AUTH_TOKEN") or ""
     values = _template_values(record, auth_token)
@@ -309,9 +338,13 @@ def execute_provision(record: ServerRecord, dry_run: bool, cfg: ProvisionConfig)
     remote_cmd = f"{bootstrap_cmd}; {start_cmd}"
     cmd, env = _build_ssh_exec(record, remote_cmd)
     askpass_path = env.get("SSH_ASKPASS") if env else None
+    infra_repository.create_event(record.node_id, "provision_started", f"host={record.host}", "created")
+    infra_repository.create_event(record.node_id, "ssh_connecting", f"{record.username}@{record.host}:{record.port}", "ssh_connecting")
+    infra_repository.create_event(record.node_id, "docker_check", "remote command will auto-detect docker or sudo -n docker", "docker_check")
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=cfg.timeout_seconds, env=env)
     except Exception as exc:
+        infra_repository.create_event(record.node_id, "provision_failed", str(exc), "ssh_connecting")
         return False, str(exc)
     finally:
         if askpass_path:
@@ -320,7 +353,10 @@ def execute_provision(record: ServerRecord, dry_run: bool, cfg: ProvisionConfig)
             except Exception:
                 pass
     if proc.returncode != 0:
-        return False, (proc.stderr or proc.stdout or "ssh failed").strip()
+        message = (proc.stderr or proc.stdout or "ssh failed").strip()
+        infra_repository.create_event(record.node_id, "provision_failed", message, "remote_command")
+        return False, message
+    infra_repository.create_event(record.node_id, "worker_container_started", (proc.stdout or "remote command ok").strip(), "container_start")
     return True, (proc.stdout or "ok").strip()
 
 
@@ -335,9 +371,16 @@ def run_provision(dry_run: bool = True) -> dict[str, Any]:
     def run_one(record: ServerRecord) -> tuple[ServerRecord, bool, str]:
         ok, message = execute_provision(record, dry_run=dry_run, cfg=cfg)
         if ok and not dry_run:
+            infra_repository.create_event(record.node_id, "wait_heartbeat", "waiting for worker registration heartbeat", "wait_heartbeat")
             verified, verify_msg = verify_node_registered(record.node_id, job.get("created_at"), cfg.verify_wait_seconds, cfg.verify_interval_seconds)
             ok = verified
             message = f"{message}; {verify_msg}"
+            infra_repository.create_event(
+                record.node_id,
+                "provision_success" if ok else "provision_failed",
+                verify_msg,
+                "wait_heartbeat",
+            )
         return record, ok, message
 
     max_workers = min(max(1, cfg.max_parallel), max(1, len(records)))

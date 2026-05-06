@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import database as db
+from . import profile_runtime
 from .browser_manager import BrowserManager
 from .runtime_limits import max_running_profiles
 
@@ -73,9 +74,11 @@ async def tick(browser_mgr: BrowserManager, task_id: str | None = None) -> dict[
 
     try:
         running = await browser_mgr.launch(runtime_profile)
-        if task["task_type"] == "open_url" and task.get("url"):
-            page = running.context.pages[0] if running.context.pages else await running.context.new_page()
-            await page.goto(task["url"], wait_until="domcontentloaded", timeout=task["timeout_seconds"] * 1000)
+        result = await profile_runtime.execute_task(running, task)
+        if task["task_type"] == "automation_script" and result:
+            payload = dict(task.get("payload") or {})
+            payload["result"] = result
+            db.update_task(task["id"], status="success", payload=payload)
         db.update_profile_run(run["id"], status="running")
     except Exception as exc:
         db.update_task(task["id"], status="failed", failure_reason=str(exc))
