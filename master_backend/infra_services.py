@@ -53,6 +53,11 @@ def find_available_worker(
         if cpu > 95.0 or mem_ratio > 0.95:
             continue
         infra_worker = repo.get_worker(node["node_id"])
+        if infra_worker:
+            if not infra_worker.get("enabled", True):
+                continue
+            if infra_worker.get("desired_state") != "active":
+                continue
         node_tags = set(node.get("tags") or [])
         if infra_worker:
             node_tags.update(infra_worker.get("tags") or [])

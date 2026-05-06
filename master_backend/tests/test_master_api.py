@@ -174,6 +174,104 @@ def test_master_local_json_biz_sync_and_schedule(master_app_client: TestClient, 
     assert task["target_node_id"] == "worker-a"
 
 
+def test_master_biz_schedule_waits_when_infra_worker_disabled(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    workers_path = tmp_path / "infra_workers.json"
+    workers_path.write_text(
+        json.dumps(
+            {
+                "workers": [
+                    {
+                        "node_id": "worker-a",
+                        "host": "10.0.0.10",
+                        "enabled": False,
+                        "desired_state": "disabled",
+                        "tags": ["kr", "ticket"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    jobs_path = tmp_path / "biz_tasks.json"
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "job_key": "ticket-1",
+                        "source_record_id": "rec-disabled",
+                        "run_generation": 1,
+                        "script_key": "open_url",
+                        "script_version": "v1",
+                        "target_url": "https://example.com",
+                        "worker_tags": ["kr", "ticket"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(infra_sync, "INFRA_WORKERS_PATH", workers_path)
+    monkeypatch.setattr(biz_sync, "BIZ_TASKS_PATH", jobs_path)
+    assert master_app_client.post("/api/master/infra/sync").status_code == 200
+    master_app_client.post(
+        "/api/master/nodes/register",
+        json={
+            "node_id": "worker-a",
+            "hostname": "worker-a.local",
+            "max_profiles": 10,
+            "capabilities": [{"script_key": "open_url", "script_version": "v1"}],
+        },
+    )
+
+    sync = master_app_client.post("/api/master/biz/sync", json={"schedule": True})
+    assert sync.status_code == 200
+    scheduled = sync.json()["scheduled"][0]
+    assert scheduled["status"] == "pending_schedule"
+    assert scheduled["assigned_worker"] is None
+    assert scheduled["master_task_id"] is None
+
+    assert master_app_client.get("/api/master/tasks").json() == []
+
+
+def test_master_profile_auto_selection_skips_running_profiles(monkeypatch):
+    class FakeResponse:
+        def __init__(self, body):
+            self._body = body
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._body
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def get(self, path):
+            return FakeResponse(
+                [
+                    {"id": "running-profile", "name": "ticket-profile", "status": "running"},
+                    {"id": "ready-profile", "name": "ticket-profile", "status": "ready"},
+                    {"id": "other-profile", "name": "other", "status": "stopped"},
+                ]
+            )
+
+    monkeypatch.setattr(master_control.httpx, "Client", FakeClient)
+
+    node = {"api_base": "http://worker-a:8080", "token": None}
+    assert master_control._fetch_worker_profile_id(node, preferred_name="ticket-profile") == "ready-profile"
+    assert master_control._fetch_worker_profile_id(node, preferred_name="missing") is None
+    assert master_control._fetch_worker_profile_id(node) == "ready-profile"
+
+
 def test_master_create_pull_report_task(master_app_client: TestClient):
     master_app_client.post(
         "/api/master/nodes/register",
@@ -360,7 +458,7 @@ def test_master_external_cdp_auto_fills_profile_id_on_pull(master_app_client: Te
         "/api/master/nodes/heartbeat",
         json={"node_id": "worker-a", "running_profiles": 0, "status": "online"},
     )
-    monkeypatch.setattr(master_control, "_fetch_worker_profile_id", lambda node: "auto-p1")
+    monkeypatch.setattr(master_control, "_fetch_worker_profile_id", lambda node, **kwargs: "auto-p1")
 
     created = master_app_client.post(
         "/api/master/tasks",
@@ -392,7 +490,7 @@ def test_master_external_cdp_keeps_empty_profile_id_when_worker_has_none(master_
         "/api/master/nodes/heartbeat",
         json={"node_id": "worker-a", "running_profiles": 0, "status": "online"},
     )
-    monkeypatch.setattr(master_control, "_fetch_worker_profile_id", lambda node: None)
+    monkeypatch.setattr(master_control, "_fetch_worker_profile_id", lambda node, **kwargs: None)
 
     created = master_app_client.post(
         "/api/master/tasks",
@@ -423,7 +521,7 @@ def test_master_open_url_auto_fills_profile_id_on_pull(master_app_client: TestCl
         "/api/master/nodes/heartbeat",
         json={"node_id": "worker-a", "running_profiles": 0, "status": "online"},
     )
-    monkeypatch.setattr(master_control, "_fetch_worker_profile_id", lambda node: "auto-open-url-p1")
+    monkeypatch.setattr(master_control, "_fetch_worker_profile_id", lambda node, **kwargs: "auto-open-url-p1")
 
     created = master_app_client.post(
         "/api/master/tasks",
@@ -455,8 +553,8 @@ def test_master_open_url_auto_creates_profile_when_worker_has_none(master_app_cl
         "/api/master/nodes/heartbeat",
         json={"node_id": "worker-a", "running_profiles": 0, "status": "online"},
     )
-    monkeypatch.setattr(master_control, "_fetch_worker_profile_id", lambda node: None)
-    monkeypatch.setattr(master_control, "_create_worker_profile", lambda node: "auto-created-open-url-p1")
+    monkeypatch.setattr(master_control, "_fetch_worker_profile_id", lambda node, **kwargs: None)
+    monkeypatch.setattr(master_control, "_create_worker_profile", lambda node, **kwargs: "auto-created-open-url-p1")
 
     created = master_app_client.post(
         "/api/master/tasks",
