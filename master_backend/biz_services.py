@@ -47,8 +47,14 @@ def schedule_biz_job(job_id: str, find_worker: WorkerSchedulerContract) -> dict[
         worker_tags=job.get("worker_tags") or [],
         required_capabilities=[{"script_key": job["script_key"], "script_version": job["script_version"]}],
     )
-    if target:
-        payload["target_node_id"] = target["node_id"]
+    if not target:
+        repo.create_event(job["id"], "job_pending_no_worker", "no available worker matched scheduling requirements")
+        return repo.update_job(
+            job["id"],
+            status="pending_schedule",
+            error_message="no available worker matched scheduling requirements",
+        ) or job
+    payload["target_node_id"] = target["node_id"]
 
     task = db.create_master_task(
         profile_id=payload.get("profile_id"),

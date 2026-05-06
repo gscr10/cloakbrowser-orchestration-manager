@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -244,7 +245,7 @@ def create_master_task(payload: dict[str, Any]) -> dict[str, Any]:
     return db.create_master_task(profile_id=payload.get("profile_id"), authorized_target=payload["authorized_target"], task_type=payload["task_type"], payload=payload, timeout_seconds=int(payload.get("timeout_seconds") or 300), max_retries=int(payload.get("max_retries") or 1), target_node_id=target_node_id)
 
 
-def _fetch_worker_profile_id(node: dict[str, Any], timeout_seconds: float = 5.0) -> str | None:
+def _fetch_worker_profile_id(node: dict[str, Any], preferred_name: str | None = None, timeout_seconds: float = 5.0) -> str | None:
     api_base = (node.get("api_base") or "").strip().rstrip("/")
     if not api_base:
         return None
@@ -261,13 +262,25 @@ def _fetch_worker_profile_id(node: dict[str, Any], timeout_seconds: float = 5.0)
         return None
     if not isinstance(profiles, list):
         return None
-    for item in profiles:
-        if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("id"):
-            return item["id"]
+    reusable_profiles = [
+        item
+        for item in profiles
+        if isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+        and item.get("id")
+        and item.get("status") not in {"running", "starting"}
+    ]
+    if preferred_name:
+        for item in reusable_profiles:
+            if item.get("name") == preferred_name:
+                return item["id"]
+        return None
+    for item in reusable_profiles:
+        return item["id"]
     return None
 
 
-def _create_worker_profile(node: dict[str, Any], timeout_seconds: float = 8.0) -> str | None:
+def _create_worker_profile(node: dict[str, Any], profile_name: str | None = None, timeout_seconds: float = 8.0) -> str | None:
     api_base = (node.get("api_base") or "").strip().rstrip("/")
     if not api_base:
         return None
@@ -276,7 +289,8 @@ def _create_worker_profile(node: dict[str, Any], timeout_seconds: float = 8.0) -
     if token:
         headers = {"Authorization": f"Bearer {token}"}
     node_id = (node.get("node_id") or "worker").strip() or "worker"
-    payload = {"name": f"auto-{node_id}", "platform": "windows"}
+    name = (profile_name or "").strip() or f"auto-{node_id}-{uuid.uuid4().hex[:8]}"
+    payload = {"name": name, "platform": "windows"}
     try:
         with httpx.Client(base_url=api_base, headers=headers, timeout=timeout_seconds) as client:
             resp = client.post("/api/profiles", json=payload)
@@ -294,9 +308,10 @@ def ensure_task_profile_for_node(task: dict[str, Any], node: dict[str, Any]) -> 
     payload = dict(task.get("payload") or {})
     if (payload.get("profile_id") or "").strip():
         return task
-    profile_id = _fetch_worker_profile_id(node)
+    preferred_name = (payload.get("profile_name") or "").strip() or None
+    profile_id = _fetch_worker_profile_id(node, preferred_name=preferred_name)
     if not profile_id:
-        profile_id = _create_worker_profile(node)
+        profile_id = _create_worker_profile(node, profile_name=preferred_name)
     if not profile_id:
         return task
     payload["profile_id"] = profile_id
