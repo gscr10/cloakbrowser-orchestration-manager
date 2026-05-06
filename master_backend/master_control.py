@@ -190,6 +190,34 @@ def _template_values(record: ServerRecord) -> dict[str, str]:
     return {key: shlex.quote(str(value)) for key, value in raw_values.items()}
 
 
+def _record_provision_target(record: ServerRecord, provider_name: str, status: str) -> None:
+    raw_values = {
+        "node_id": record.node_id,
+        "host": record.host,
+        "username": record.username,
+        "max_profiles": str(record.max_profiles),
+        "master_base_url": PROVISION_MASTER_BASE_URL,
+    }
+    worker_api_base = PROVISION_WORKER_API_BASE.format(**raw_values)
+    infra_repository.upsert_worker(
+        {
+            "node_id": record.node_id,
+            "source": provider_name,
+            "source_record_id": record.node_id,
+            "host": record.host,
+            "ssh_user": record.username,
+            "ssh_password": record.password,
+            "ssh_port": record.port,
+            "enabled": record.enabled,
+            "desired_state": "active" if record.enabled else "disabled",
+            "status": status,
+            "max_profiles": record.max_profiles,
+            "tags": record.tags or [],
+            "worker_api_base": worker_api_base,
+        }
+    )
+
+
 def _parse_ts(value: str | None) -> dt.datetime | None:
     if not value:
         return None
@@ -368,6 +396,8 @@ def run_provision(dry_run: bool = True) -> dict[str, Any]:
     cfg = load_provision_config()
     provider = get_active_provider()
     records = [record for record in provider.get_servers() if record.enabled]
+    for record in records:
+        _record_provision_target(record, provider.name, "pending_deploy" if dry_run else "deploying")
     job = db.create_provision_job(provider=provider.name, total_servers=len(records), dry_run=dry_run)
     success_count = 0
     failed_count = 0
