@@ -21,6 +21,10 @@ def test_master_node_register_and_heartbeat(master_app_client: TestClient):
     )
     assert register.status_code == 200
     assert register.json()["node"]["node_id"] == "worker-a"
+    workers = master_app_client.get("/api/master/infra/workers")
+    assert workers.status_code == 200
+    assert workers.json()[0]["node_id"] == "worker-a"
+    assert workers.json()[0]["source"] == "registered"
 
     heartbeat = master_app_client.post(
         "/api/master/nodes/heartbeat",
@@ -35,6 +39,29 @@ def test_master_node_register_and_heartbeat(master_app_client: TestClient):
     )
     assert heartbeat.status_code == 200
     assert heartbeat.json()["node"]["running_profiles"] == 2
+
+
+def test_master_heartbeat_backfills_infra_worker(master_app_client: TestClient):
+    from master_backend import database as db
+
+    db.upsert_master_node(
+        node_id="worker-heartbeat",
+        hostname="worker-heartbeat.local",
+        api_base="http://10.0.0.20:8080",
+        tags=["runtime"],
+        max_profiles=10,
+    )
+    heartbeat = master_app_client.post(
+        "/api/master/nodes/heartbeat",
+        json={"node_id": "worker-heartbeat", "running_profiles": 1, "status": "online"},
+    )
+    assert heartbeat.status_code == 200
+
+    workers = master_app_client.get("/api/master/infra/workers")
+    assert workers.status_code == 200
+    assert workers.json()[0]["node_id"] == "worker-heartbeat"
+    assert workers.json()[0]["source"] == "heartbeat"
+    assert workers.json()[0]["host"] == "10.0.0.20"
 
 
 def test_master_nodes_list_endpoint(master_app_client: TestClient):
@@ -633,6 +660,10 @@ def test_master_provider_and_provision_dry_run(master_app_client: TestClient, tm
     data = provision.json()
     assert data["job"]["status"] == "success"
     assert len(data["items"]) == 2
+    workers = master_app_client.get("/api/master/infra/workers")
+    assert workers.status_code == 200
+    assert [worker["node_id"] for worker in workers.json()] == ["worker-a", "worker-b"]
+    assert workers.json()[0]["status"] == "pending_deploy"
 
     list_jobs = master_app_client.get("/api/master/provision/jobs")
     assert list_jobs.status_code == 200

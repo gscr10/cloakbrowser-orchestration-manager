@@ -70,7 +70,14 @@ async def master_register_node(req: MasterNodeRegisterRequest):
         running_profiles=0,
         status="online",
     )
-    infra_services.record_worker_registration(req.node_id, [cap.model_dump() for cap in req.capabilities])
+    infra_services.record_worker_registration(
+        req.node_id,
+        [cap.model_dump() for cap in req.capabilities],
+        hostname=req.hostname,
+        api_base=req.api_base,
+        tags=req.tags,
+        max_profiles=req.max_profiles,
+    )
     return {"node": node}
 
 

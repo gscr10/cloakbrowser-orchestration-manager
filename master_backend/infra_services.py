@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from typing import Any
+from urllib.parse import urlparse
 
 from . import database as db
 from . import infra_repository as repo
@@ -84,7 +85,42 @@ def find_available_worker(
     return node
 
 
-def record_worker_registration(node_id: str, capabilities: list[dict[str, Any]]) -> None:
+def _host_from_api_base(api_base: str | None) -> str | None:
+    if not api_base:
+        return None
+    parsed = urlparse(api_base)
+    return parsed.hostname or api_base
+
+
+def record_worker_registration(
+    node_id: str,
+    capabilities: list[dict[str, Any]],
+    hostname: str | None = None,
+    api_base: str | None = None,
+    tags: list[str] | None = None,
+    max_profiles: int = 15,
+) -> None:
+    existing = repo.get_worker(node_id)
+    host = (existing or {}).get("host") or _host_from_api_base(api_base) or hostname or node_id
+    merged_tags = set((existing or {}).get("tags") or [])
+    merged_tags.update(tags or [])
+    repo.upsert_worker(
+        {
+            **(existing or {}),
+            "node_id": node_id,
+            "source": (existing or {}).get("source") or "registered",
+            "source_record_id": (existing or {}).get("source_record_id") or node_id,
+            "host": host,
+            "ssh_user": (existing or {}).get("ssh_user") or "root",
+            "ssh_port": (existing or {}).get("ssh_port") or 22,
+            "enabled": (existing or {}).get("enabled", True),
+            "desired_state": (existing or {}).get("desired_state") or "active",
+            "status": "online",
+            "max_profiles": max_profiles,
+            "tags": sorted(merged_tags),
+            "worker_api_base": api_base or (existing or {}).get("worker_api_base"),
+        }
+    )
     if capabilities:
         repo.replace_capabilities(node_id, capabilities)
     repo.create_event(node_id, "worker_registered", "worker registered with master", "registration")
@@ -110,6 +146,26 @@ def record_worker_heartbeat(
             {
                 **infra_worker,
                 "status": status,
+                "last_heartbeat_at": last_heartbeat_at,
+            }
+        )
+    else:
+        node = db.get_master_node(node_id) or {}
+        host = _host_from_api_base(node.get("api_base")) or node.get("hostname") or node_id
+        repo.upsert_worker(
+            {
+                "node_id": node_id,
+                "source": "heartbeat",
+                "source_record_id": node_id,
+                "host": host,
+                "ssh_user": "root",
+                "ssh_port": 22,
+                "enabled": True,
+                "desired_state": "active",
+                "status": status,
+                "max_profiles": int(node.get("max_profiles") or 15),
+                "tags": node.get("tags") or [],
+                "worker_api_base": node.get("api_base"),
                 "last_heartbeat_at": last_heartbeat_at,
             }
         )
