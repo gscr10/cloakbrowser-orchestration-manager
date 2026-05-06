@@ -28,6 +28,23 @@ def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+_BIZ_EXECUTION_STATUSES = {"assigned", "dispatched", "running", "success", "failed", "final_failed"}
+_BIZ_SOURCE_FIELDS = {
+    "status",
+    "script_key",
+    "script_version",
+    "account",
+    "target_url",
+    "profile_name",
+    "worker_tags",
+    "priority",
+    "max_retries",
+    "params_json",
+    "input_snapshot_json",
+}
+_BIZ_RUNTIME_FIELDS = {"assigned_worker", "profile_id", "master_task_id", "result_summary", "error_message", "last_run_at"}
+
+
 def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with get_db() as conn:
@@ -695,9 +712,17 @@ def upsert_biz_job(payload: dict[str, Any]) -> dict[str, Any]:
         "last_run_at": payload.get("last_run_at"),
     }
     with get_db() as conn:
-        existing = conn.execute("SELECT id FROM biz_jobs WHERE idempotency_key = ?", (idempotency_key,)).fetchone()
+        existing = conn.execute("SELECT * FROM biz_jobs WHERE idempotency_key = ?", (idempotency_key,)).fetchone()
         if existing:
             job_id = existing["id"]
+            existing_values = dict(existing)
+            execution_started = bool(existing_values.get("master_task_id")) or existing_values.get("status") in _BIZ_EXECUTION_STATUSES
+            if execution_started:
+                for field in _BIZ_SOURCE_FIELDS:
+                    values[field] = existing_values[field]
+            for field in _BIZ_RUNTIME_FIELDS:
+                if field not in payload:
+                    values[field] = existing_values[field]
             conn.execute(
                 """UPDATE biz_jobs SET job_key=?, source=?, source_record_id=?, run_generation=?,
                 enabled=?, status=?, script_key=?, script_version=?, account=?, target_url=?,

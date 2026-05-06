@@ -5,13 +5,14 @@ from pathlib import Path
 from typing import Any
 
 from . import infra_repository as repo
-from .json_sources import load_items
+from .source_adapters import LocalJsonSource
 
 INFRA_WORKERS_PATH = Path(os.environ.get("MASTER_INFRA_WORKERS_PATH", "/config/infra_workers.json"))
 
 
 def local_infra_workers(path: Path | None = None) -> list[dict[str, Any]]:
-    return load_items(path or INFRA_WORKERS_PATH, "workers")
+    source = LocalJsonSource(infra_workers_path=path or INFRA_WORKERS_PATH, biz_tasks_path=Path("/dev/null"))
+    return source.list_workers()
 
 
 def normalize_worker_record(item: dict[str, Any]) -> dict[str, Any] | None:
