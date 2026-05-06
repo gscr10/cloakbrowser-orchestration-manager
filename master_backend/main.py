@@ -3,19 +3,15 @@
 from __future__ import annotations
 
 import datetime as dt
-import hmac
 import json
 import logging
-import os
 from contextlib import asynccontextmanager
-from http.cookies import SimpleCookie
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import architecture
 from . import biz_repository
@@ -40,49 +36,6 @@ from .models import (
 logger = logging.getLogger("cloakbrowser.master")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
-AUTH_TOKEN: str | None = os.environ.get("AUTH_TOKEN") or None
-_AUTH_EXEMPT = frozenset({"/api/status"})
-
-
-def _check_auth(scope: Scope) -> bool:
-    for key, val in scope.get("headers", []):
-        if key == b"authorization":
-            auth_value = val.decode()
-            if auth_value.startswith("Bearer "):
-                token = auth_value[7:]
-                if token and AUTH_TOKEN and hmac.compare_digest(token, AUTH_TOKEN):
-                    return True
-            break
-    for key, val in scope.get("headers", []):
-        if key == b"cookie":
-            cookies = SimpleCookie()
-            cookies.load(val.decode())
-            if "auth_token" in cookies:
-                cookie_val = cookies["auth_token"].value
-                if cookie_val and AUTH_TOKEN and hmac.compare_digest(cookie_val, AUTH_TOKEN):
-                    return True
-            break
-    return False
-
-
-class AuthMiddleware:
-    def __init__(self, app: ASGIApp):
-        self.app = app
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send):
-        if not AUTH_TOKEN or scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-        path = scope["path"]
-        if path in _AUTH_EXEMPT or not path.startswith("/api/"):
-            await self.app(scope, receive, send)
-            return
-        if _check_auth(scope):
-            await self.app(scope, receive, send)
-            return
-        response = JSONResponse({"detail": "Unauthorized"}, status_code=401)
-        await response(scope, receive, send)
-
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -92,7 +45,6 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="CloakBrowser Master API", lifespan=lifespan)
-app.add_middleware(AuthMiddleware)
 
 MASTER_FRONTEND_DIR = Path(__file__).parent.parent / "master-frontend" / "dist"
 if MASTER_FRONTEND_DIR.exists():
@@ -112,7 +64,7 @@ async def master_register_node(req: MasterNodeRegisterRequest):
         node_id=req.node_id,
         hostname=req.hostname,
         api_base=req.api_base,
-        token=req.token,
+        token=None,
         tags=req.tags,
         max_profiles=req.max_profiles,
         running_profiles=0,
@@ -131,7 +83,7 @@ async def master_node_heartbeat(req: MasterNodeHeartbeatRequest):
         node_id=req.node_id,
         hostname=existing["hostname"],
         api_base=existing.get("api_base"),
-        token=existing.get("token"),
+        token=None,
         tags=existing.get("tags") or [],
         max_profiles=int(existing.get("max_profiles") or 15),
         running_profiles=req.running_profiles,

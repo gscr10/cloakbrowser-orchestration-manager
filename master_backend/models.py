@@ -25,7 +25,6 @@ class MasterNodeRegisterRequest(BaseModel):
     node_id: str
     hostname: str
     api_base: str | None = None
-    token: str | None = None
     tags: list[str] = Field(default_factory=list)
     max_profiles: int = Field(default=15, ge=1, le=15)
     capabilities: list[MasterWorkerCapability] = Field(default_factory=list)

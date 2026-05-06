@@ -142,7 +142,6 @@ Worker UI/API:  http://<worker-public-ip>:8080
 
 | 变量 | 默认值 | 作用 |
 | --- | --- | --- |
-| `AUTH_TOKEN` | 未设置 | 可选 Bearer token 和 Web UI 登录 token。未设置时 API 和 UI 默认开放。 |
 | `CONFIG_DIR` | `/config` | 外部配置文件目录。 |
 | `CONFIG_IMPORT_ON_START` | `false` | 为 true 时启动阶段导入 `/config/profiles.json` 和 `/config/proxies.csv`。 |
 | `MAX_RUNNING_PROFILES` | `auto` | 单个服务允许同时运行的 Profile 上限。默认自适应，硬上限为 15；也可以显式设置 1-15 的数字。该限制作用于 UI/API/CLI 手动启动和调度器启动。 |
@@ -210,7 +209,6 @@ python3 -m worker_backend.cli status
 
 ```bash
 export CLOAK_MANAGER_URL=http://localhost:8080
-export CLOAK_MANAGER_TOKEN=your-secret-token
 
 python3 -m worker_backend.cli profiles list
 ```
@@ -219,7 +217,6 @@ python3 -m worker_backend.cli profiles list
 
 ```text
 --base-url http://localhost:8080
---token <token>
 --timeout 30
 --compact
 ```
@@ -475,7 +472,7 @@ flowchart TD
 | `MASTER_PROVISION_BOOTSTRAP_CMD` | `set -e; mkdir -p /opt/cloak-manager-worker/config; DOCKER="docker"; docker ps ... || DOCKER="sudo -n docker"; $DOCKER pull <worker-image>` | 初始化前置命令。 |
 | `MASTER_PROVISION_START_CMD` | `set -e; DOCKER="docker"; docker ps ... || DOCKER="sudo -n docker"; $DOCKER rm ...; $DOCKER run ...` | 启动 Worker 命令。 |
 
-模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`、`{master_base_url}`、`{worker_api_base}`、`{auth_token}`。
+模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`、`{master_base_url}`、`{worker_api_base}`。
 
 默认模板会先尝试当前 SSH 用户直接访问 Docker daemon；如果失败，会自动改用 `sudo -n docker`。远端用户需要具备无交互 sudo 权限，否则 non dry-run 会失败并返回远端错误。
 默认模板不会向 Worker 容器注入 `MAX_RUNNING_PROFILES`，因此 Worker 使用自身 `auto` 上限（最多 15）并在每次启动 Profile 前做资源压力检查。`servers.json` 中的 `max_profiles` 仅作为 Master 调度容量提示；如果需要硬性限制某台 Worker，可在自定义 `MASTER_PROVISION_START_CMD` 中显式增加 `-e MAX_RUNNING_PROFILES=<n>`。
@@ -569,18 +566,11 @@ export MASTER_PROVISION_WORKER_API_BASE=http://{host}:8080
 
 本地一键联调脚本 `examples/master-worker/run_local.sh` 仅用于开发调试，不是公网部署主流程。
 
-## 认证
+## 访问控制
 
-默认情况下认证关闭，适合本地使用。设置 `AUTH_TOKEN` 后，将启用登录和 API Bearer Token 校验。
+当前阶段 Master API、Worker API 和两个 Web UI 默认开放，公网联调先不内置 token 鉴权。Worker 管理通过服务器 IP、用户名和密码或 SSH key 完成，相关凭据只用于 Master provision 的 SSH 登录流程。
 
-设置 `AUTH_TOKEN` 后：
-
-- Web UI 会显示登录流程。
-- API 客户端需要发送 `Authorization: Bearer <token>`。
-- VNC 和 CDP WebSocket 路由需要同一认证上下文。
-- `/api/status`、`/api/auth/status` 和 `/api/auth/login` 会保留给健康检查和登录流程使用。
-
-如果服务暴露到 localhost 之外，应在前面放置 HTTPS 终止层，并根据部署环境做好访问控制。Manager 本身提供 HTTP 服务。
+如果服务暴露到 localhost 之外，应在前面放置 HTTPS 终止层，并根据部署环境做好网络访问控制。Manager 本身提供 HTTP 服务。
 
 ## 附录：本地开发
 
@@ -655,8 +645,6 @@ Master 前端 API 代理环境变量：
 
 - `master-frontend/.env.example` 使用 `VITE_API_PROXY_TARGET=http://127.0.0.1:8080`
 - 两个前端的 Vite `allowedHosts` 可用 `VITE_ALLOWED_HOSTS=.example.com,localhost` 覆盖；默认保留 `.monkeycode-ai.online`。
-
-当启用 `AUTH_TOKEN` 时，可在 Master 前端右上角输入并保存 Token，前端会自动附带 `Authorization: Bearer <token>` 请求头。
 
 如果不设置该变量，两个前端都默认代理到 `http://localhost:8080`。
 

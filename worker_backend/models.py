@@ -127,10 +127,6 @@ class ClipboardRequest(BaseModel):
     text: str = Field(max_length=1_048_576)  # 1MB max
 
 
-class LoginRequest(BaseModel):
-    token: str
-
-
 class ProxyEndpointCreate(BaseModel):
     name: str | None = None
     protocol: Literal["http", "https", "socks5"] = "http"

@@ -103,7 +103,6 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   font-weight: 700;
 }
 .toolbar, .button-row, .header-actions, .hero-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.token-input { min-width: 240px; }
 
 .page-stack { display: grid; gap: 16px; }
 .hero-panel, .page-header-card {
@@ -365,5 +364,4 @@ pre {
     grid-template-columns: 1fr;
   }
   .flow-arrow { display: none; }
-  .token-input { min-width: 0; }
 }

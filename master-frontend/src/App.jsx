@@ -118,7 +118,6 @@ function EmptyRow({ colSpan, message = "暂无数据" }) {
 
 export default function App() {
   const [activePage, setActivePage] = useState("overview");
-  const [token, setToken] = useState(() => window.localStorage.getItem("master_token") || "");
   const [nodes, setNodes] = useState([]);
   const [cluster, setCluster] = useState(null);
   const [tasks, setTasks] = useState([]);
@@ -154,12 +153,6 @@ export default function App() {
     timeout_seconds: 300,
     max_retries: 1
   });
-
-  const authedApi = async (path, options = {}) => {
-    const nextHeaders = { ...(options.headers || {}) };
-    if (token.trim()) nextHeaders.Authorization = `Bearer ${token.trim()}`;
-    return api(path, { ...options, headers: nextHeaders });
-  };
 
   const totals = useMemo(() => {
     const online = nodes.filter((n) => n.status === "online").length;
@@ -217,22 +210,22 @@ export default function App() {
         nextBizEvents,
         nextBizArtifacts
       ] = await Promise.all([
-        authedApi("/api/master/nodes"),
-        authedApi("/api/master/cluster/status"),
-        authedApi("/api/master/tasks"),
-        authedApi("/api/master/providers"),
-        authedApi("/api/master/provision/jobs"),
-        authedApi("/api/master/provision/servers"),
-        authedApi("/api/master/architecture/summary"),
-        authedApi("/api/master/infra/workers"),
-        authedApi("/api/master/infra/capabilities"),
-        authedApi("/api/master/infra/profiles"),
-        authedApi("/api/master/infra/events"),
-        authedApi("/api/master/infra/sync-runs"),
-        authedApi("/api/master/biz/jobs"),
-        authedApi("/api/master/biz/runs"),
-        authedApi("/api/master/biz/events"),
-        authedApi("/api/master/biz/artifacts")
+        api("/api/master/nodes"),
+        api("/api/master/cluster/status"),
+        api("/api/master/tasks"),
+        api("/api/master/providers"),
+        api("/api/master/provision/jobs"),
+        api("/api/master/provision/servers"),
+        api("/api/master/architecture/summary"),
+        api("/api/master/infra/workers"),
+        api("/api/master/infra/capabilities"),
+        api("/api/master/infra/profiles"),
+        api("/api/master/infra/events"),
+        api("/api/master/infra/sync-runs"),
+        api("/api/master/biz/jobs"),
+        api("/api/master/biz/runs"),
+        api("/api/master/biz/events"),
+        api("/api/master/biz/artifacts")
       ]);
       setNodes(nextNodes);
       setCluster(nextCluster);
@@ -270,8 +263,8 @@ export default function App() {
   useEffect(() => {
     if (!selectedTaskId) return;
     Promise.all([
-      authedApi(`/api/master/tasks/${selectedTaskId}/events`),
-      authedApi(`/api/master/tasks/${selectedTaskId}`)
+      api(`/api/master/tasks/${selectedTaskId}/events`),
+      api(`/api/master/tasks/${selectedTaskId}`)
     ]).then(([nextEvents, nextTask]) => {
       setTaskEvents(nextEvents);
       setTaskDetail(nextTask);
@@ -283,18 +276,8 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedJobId) return;
-    authedApi(`/api/master/provision/jobs/${selectedJobId}`).then(setJobDetail).catch(() => setJobDetail(null));
+    api(`/api/master/provision/jobs/${selectedJobId}`).then(setJobDetail).catch(() => setJobDetail(null));
   }, [selectedJobId]);
-
-  const saveToken = () => {
-    if (token.trim()) {
-      window.localStorage.setItem("master_token", token.trim());
-      setNotice("Token 已保存");
-      return;
-    }
-    window.localStorage.removeItem("master_token");
-    setNotice("Token 已清空");
-  };
 
   const createTask = async () => {
     const payload = {
@@ -305,13 +288,13 @@ export default function App() {
       timeout_seconds: Number(newTask.timeout_seconds) || 300,
       max_retries: Number(newTask.max_retries) || 1
     };
-    await authedApi("/api/master/tasks", { method: "POST", body: JSON.stringify(payload) });
+    await api("/api/master/tasks", { method: "POST", body: JSON.stringify(payload) });
     setNotice("任务已创建");
     await refreshCore();
   };
 
   const runProvision = async (dryRun) => {
-    const result = await authedApi("/api/master/provision/run", {
+    const result = await api("/api/master/provision/run", {
       method: "POST",
       body: JSON.stringify({ dry_run: dryRun })
     });
@@ -326,14 +309,14 @@ export default function App() {
   };
 
   const syncInfra = async () => {
-    const result = await authedApi("/api/master/infra/sync", { method: "POST" });
+    const result = await api("/api/master/infra/sync", { method: "POST" });
     setActivePage("infra");
     setNotice(`基础设施同步完成：${result.count || 0} 条`);
     await refreshCore();
   };
 
   const syncBiz = async (schedule = false) => {
-    const result = await authedApi("/api/master/biz/sync", {
+    const result = await api("/api/master/biz/sync", {
       method: "POST",
       body: JSON.stringify({ schedule })
     });
@@ -347,7 +330,7 @@ export default function App() {
       setNotice("feishu_cli 预留未实现，暂不能作为服务器提供方");
       return;
     }
-    await authedApi("/api/master/providers/active", {
+    await api("/api/master/providers/active", {
       method: "PUT",
       body: JSON.stringify({ provider })
     });
@@ -356,7 +339,7 @@ export default function App() {
   };
 
   const validateFeishu = async () => {
-    const result = await authedApi("/api/master/providers/feishu-cli/validate", { method: "POST" });
+    const result = await api("/api/master/providers/feishu-cli/validate", { method: "POST" });
     setFeishuCheck(result);
   };
 
@@ -475,8 +458,6 @@ export default function App() {
             <h2>{NAV_ITEMS.find((item) => item.id === activePage)?.label || "分层总览"}</h2>
           </div>
           <div className="toolbar">
-            <input className="token-input" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="AUTH_TOKEN（可选）" />
-            <button className="secondary" onClick={saveToken}>保存 Token</button>
             <button onClick={refreshCore} disabled={loading}>{loading ? "刷新中..." : "刷新"}</button>
           </div>
         </header>
