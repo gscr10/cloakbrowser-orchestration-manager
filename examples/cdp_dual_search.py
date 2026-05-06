@@ -5,7 +5,6 @@ Usage:
 
 Optional environment variables:
   CLOAK_MANAGER_URL=http://127.0.0.1:8080
-  CLOAK_MANAGER_TOKEN=...
 """
 
 from __future__ import annotations
@@ -20,13 +19,6 @@ from playwright.async_api import Browser, Page, async_playwright
 
 
 MANAGER_URL = os.environ.get("CLOAK_MANAGER_URL", "http://127.0.0.1:8080").rstrip("/")
-AUTH_TOKEN = os.environ.get("CLOAK_MANAGER_TOKEN")
-
-
-def auth_headers() -> dict[str, str]:
-    if not AUTH_TOKEN:
-        return {}
-    return {"Authorization": f"Bearer {AUTH_TOKEN}"}
 
 
 async def api_request(
@@ -35,7 +27,7 @@ async def api_request(
     path: str,
     json_body: dict[str, Any] | None = None,
 ) -> Any:
-    response = await client.request(method, path, json=json_body, headers=auth_headers())
+    response = await client.request(method, path, json=json_body)
     response.raise_for_status()
     if not response.content:
         return None
@@ -111,10 +103,7 @@ async def drive_profile(
     cdp_endpoint = await ensure_running(client, profile["id"])
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.connect_over_cdp(
-            cdp_endpoint,
-            headers=auth_headers() or None,
-        )
+        browser = await pw.chromium.connect_over_cdp(cdp_endpoint)
         try:
             page = await ensure_page(browser)
             await search_fn(page, keyword)

@@ -266,7 +266,7 @@ def test_master_profile_auto_selection_skips_running_profiles(monkeypatch):
 
     monkeypatch.setattr(master_control.httpx, "Client", FakeClient)
 
-    node = {"api_base": "http://worker-a:8080", "token": None}
+    node = {"api_base": "http://worker-a:8080"}
     assert master_control._fetch_worker_profile_id(node, preferred_name="ticket-profile") == "ready-profile"
     assert master_control._fetch_worker_profile_id(node, preferred_name="missing") is None
     assert master_control._fetch_worker_profile_id(node) == "ready-profile"

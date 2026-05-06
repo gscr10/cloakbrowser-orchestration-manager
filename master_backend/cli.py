@@ -19,9 +19,8 @@ class ApiError(RuntimeError):
 
 
 class MasterClient:
-    def __init__(self, base_url: str, token: str | None = None, timeout: float = 30.0) -> None:
-        headers = {"Authorization": f"Bearer {token}"} if token else None
-        self._client = httpx.Client(base_url=base_url.rstrip("/"), headers=headers, timeout=timeout)
+    def __init__(self, base_url: str, timeout: float = 30.0) -> None:
+        self._client = httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout)
 
     def close(self) -> None:
         self._client.close()
@@ -111,7 +110,6 @@ def cmd_provision_job(client: MasterClient, args: argparse.Namespace) -> Any:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cloak-master", description="CLI for independent master backend")
     parser.add_argument("--base-url", default=os.environ.get("CLOAK_MASTER_URL", DEFAULT_BASE_URL))
-    parser.add_argument("--token", default=os.environ.get("CLOAK_MASTER_TOKEN") or os.environ.get("AUTH_TOKEN"))
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--compact", action="store_true")
     subparsers = parser.add_subparsers(dest="action", required=True)
@@ -174,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     if compact_output:
         args.compact = True
 
-    client = MasterClient(args.base_url, token=args.token, timeout=args.timeout)
+    client = MasterClient(args.base_url, timeout=args.timeout)
     try:
         result = args.func(client, args)
     except (ApiError, json.JSONDecodeError, OSError, argparse.ArgumentTypeError) as exc:

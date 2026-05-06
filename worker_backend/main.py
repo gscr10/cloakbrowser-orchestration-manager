@@ -7,22 +7,18 @@ for browser profile management with live VNC viewing.
 from __future__ import annotations
 
 import asyncio
-import hmac
 import logging
 import os
 import struct
 import shutil
 from contextlib import asynccontextmanager
-from http.cookies import SimpleCookie
 from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-import starlette.requests
-from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import automation_runtime
 from . import config_importer
@@ -33,7 +29,6 @@ from .browser_manager import BrowserManager
 from .models import (
     ClipboardRequest,
     LaunchResponse,
-    LoginRequest,
     ProfileCreate,
     ProfileResponse,
     ProfileStatusResponse,
@@ -57,41 +52,8 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 
-# Optional authentication via AUTH_TOKEN env var.
-# If not set, all routes are open (local dev). If set, all /api/* routes
-# (except /api/auth/* and /api/status) require Bearer token or cookie.
-AUTH_TOKEN: str | None = os.environ.get("AUTH_TOKEN") or None
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", str(config_importer.DEFAULT_CONFIG_DIR)))
 CONFIG_IMPORT_ON_START = os.environ.get("CONFIG_IMPORT_ON_START", "false").lower() in {"1", "true", "yes", "on"}
-
-# Paths that bypass authentication even when AUTH_TOKEN is set
-_AUTH_EXEMPT = frozenset({"/api/auth/status", "/api/auth/login", "/api/status"})
-
-
-def _check_auth(scope: Scope) -> bool:
-    """Check if the request has a valid auth token (header or cookie)."""
-    # Check Authorization: Bearer <token> header
-    for key, val in scope.get("headers", []):
-        if key == b"authorization":
-            auth_value = val.decode()
-            if auth_value.startswith("Bearer "):
-                token = auth_value[7:]
-                if token and hmac.compare_digest(token, AUTH_TOKEN):
-                    return True
-            break
-
-    # Check auth_token cookie
-    for key, val in scope.get("headers", []):
-        if key == b"cookie":
-            cookies = SimpleCookie()
-            cookies.load(val.decode())
-            if "auth_token" in cookies:
-                cookie_val = cookies["auth_token"].value
-                if cookie_val and hmac.compare_digest(cookie_val, AUTH_TOKEN):
-                    return True
-            break
-
-    return False
 
 
 def _is_https(request: Request) -> bool:
@@ -148,43 +110,6 @@ async def _check_websocket_origin(websocket: WebSocket) -> bool:
     logger.warning("WebSocket origin mismatch: origin=%s host=%s", origin, host)
     await websocket.close(code=4403, reason="Origin not allowed")
     return False
-
-
-class AuthMiddleware:
-    """Raw ASGI middleware for optional token auth.
-
-    Uses raw ASGI instead of BaseHTTPMiddleware because the latter
-    breaks WebSocket routes (wraps request body, preventing WS upgrade).
-    """
-
-    def __init__(self, app: ASGIApp):
-        self.app = app
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send):
-        # Pass through if auth disabled, or non-HTTP/WS scope (e.g. lifespan)
-        if not AUTH_TOKEN or scope["type"] not in ("http", "websocket"):
-            await self.app(scope, receive, send)
-            return
-
-        path = scope["path"]
-
-        # Skip auth for exempt endpoints and non-API paths (static frontend)
-        if path in _AUTH_EXEMPT or not path.startswith("/api/"):
-            await self.app(scope, receive, send)
-            return
-
-        if _check_auth(scope):
-            await self.app(scope, receive, send)
-            return
-
-        # Reject — unauthenticated
-        if scope["type"] == "websocket":
-            # ASGI requires receiving websocket.connect before sending close
-            await receive()
-            await send({"type": "websocket.close", "code": 4401, "reason": "Unauthorized"})
-        else:
-            response = JSONResponse({"detail": "Unauthorized"}, status_code=401)
-            await response(scope, receive, send)
 
 
 # Singleton browser manager
@@ -441,49 +366,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="CloakBrowser Manager", lifespan=lifespan)
-app.add_middleware(AuthMiddleware)
 
 
-# ── Authentication ────────────────────────────────────────────────────────────
+# ── Compatibility auth status ─────────────────────────────────────────────────
 
 
 @app.get("/api/auth/status")
-async def auth_status(request: starlette.requests.Request):
-    """Check if auth is enabled and if the current request is authenticated.
-
-    Exempt from auth middleware so the frontend can always call it.
-    """
-    authenticated = False
-    if AUTH_TOKEN:
-        authenticated = _check_auth(request.scope)
-    return {"auth_required": AUTH_TOKEN is not None, "authenticated": authenticated}
-
-
-@app.post("/api/auth/login")
-async def auth_login(body: LoginRequest, request: Request, response: Response):
-    if not AUTH_TOKEN:
-        return {"ok": True}
-    if not body.token or not hmac.compare_digest(body.token, AUTH_TOKEN):
-        raise HTTPException(status_code=401, detail="Invalid token")
-    is_https = _is_https(request)
-    response.set_cookie(
-        key="auth_token",
-        value=AUTH_TOKEN,
-        httponly=True,
-        samesite="strict",
-        secure=is_https,
-        path="/",
-    )
-    return {"ok": True}
-
-
-@app.post("/api/auth/logout")
-async def auth_logout(request: Request, response: Response):
-    is_https = _is_https(request)
-    response.delete_cookie(
-        key="auth_token", path="/", secure=is_https, samesite="strict",
-    )
-    return {"ok": True}
+async def auth_status():
+    return {"auth_required": False, "authenticated": True}
 
 
 # ── Profile CRUD ──────────────────────────────────────────────────────────────

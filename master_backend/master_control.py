@@ -56,7 +56,6 @@ PROVISION_START_CMD = os.environ.get(
     "-e WORKER_NODE_ID={node_id} "
     "-e MASTER_BASE_URL={master_base_url} "
     "-e WORKER_API_BASE={worker_api_base} "
-    "-e AUTH_TOKEN={auth_token} "
     f"{PROVISION_WORKER_IMAGE}",
 )
 PROVISION_VERIFY_WAIT_SECONDS = int(os.environ.get("MASTER_PROVISION_VERIFY_WAIT_SECONDS", "30"))
@@ -178,14 +177,13 @@ def load_provision_config() -> ProvisionConfig:
     return ProvisionConfig(timeout_seconds=PROVISION_TIMEOUT_SECONDS, max_parallel=max(1, PROVISION_MAX_PARALLEL), bootstrap_cmd=PROVISION_BOOTSTRAP_CMD, start_cmd=PROVISION_START_CMD, verify_wait_seconds=PROVISION_VERIFY_WAIT_SECONDS, verify_interval_seconds=PROVISION_VERIFY_INTERVAL_SECONDS)
 
 
-def _template_values(record: ServerRecord, auth_token: str) -> dict[str, str]:
+def _template_values(record: ServerRecord) -> dict[str, str]:
     raw_values = {
         "node_id": record.node_id,
         "host": record.host,
         "username": record.username,
         "max_profiles": str(record.max_profiles),
         "master_base_url": PROVISION_MASTER_BASE_URL,
-        "auth_token": auth_token,
     }
     worker_api_base = PROVISION_WORKER_API_BASE.format(**raw_values)
     raw_values["worker_api_base"] = worker_api_base
@@ -249,12 +247,8 @@ def _fetch_worker_profile_id(node: dict[str, Any], preferred_name: str | None = 
     api_base = (node.get("api_base") or "").strip().rstrip("/")
     if not api_base:
         return None
-    headers = None
-    token = (node.get("token") or "").strip()
-    if token:
-        headers = {"Authorization": f"Bearer {token}"}
     try:
-        with httpx.Client(base_url=api_base, headers=headers, timeout=timeout_seconds) as client:
+        with httpx.Client(base_url=api_base, timeout=timeout_seconds) as client:
             resp = client.get("/api/profiles")
             resp.raise_for_status()
             profiles = resp.json()
@@ -284,15 +278,11 @@ def _create_worker_profile(node: dict[str, Any], profile_name: str | None = None
     api_base = (node.get("api_base") or "").strip().rstrip("/")
     if not api_base:
         return None
-    headers = None
-    token = (node.get("token") or "").strip()
-    if token:
-        headers = {"Authorization": f"Bearer {token}"}
     node_id = (node.get("node_id") or "worker").strip() or "worker"
     name = (profile_name or "").strip() or f"auto-{node_id}-{uuid.uuid4().hex[:8]}"
     payload = {"name": name, "platform": "windows"}
     try:
-        with httpx.Client(base_url=api_base, headers=headers, timeout=timeout_seconds) as client:
+        with httpx.Client(base_url=api_base, timeout=timeout_seconds) as client:
             resp = client.post("/api/profiles", json=payload)
             resp.raise_for_status()
             body = resp.json()
@@ -346,8 +336,7 @@ def execute_provision(record: ServerRecord, dry_run: bool, cfg: ProvisionConfig)
     if dry_run:
         infra_repository.create_event(record.node_id, "provision_dry_run", "provision dry-run skipped remote execution", "created")
         return True, "dry-run"
-    auth_token = os.environ.get("AUTH_TOKEN") or ""
-    values = _template_values(record, auth_token)
+    values = _template_values(record)
     bootstrap_cmd = cfg.bootstrap_cmd.format(**values)
     start_cmd = cfg.start_cmd.format(**values)
     remote_cmd = f"{bootstrap_cmd}; {start_cmd}"

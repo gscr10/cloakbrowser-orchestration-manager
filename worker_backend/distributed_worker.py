@@ -86,12 +86,11 @@ async def process_one_task(client: httpx.AsyncClient, cfg: dict[str, Any], brows
 
 async def worker_loop(browser_mgr: BrowserManager) -> None:
     cfg = settings()
-    headers = {"Authorization": f"Bearer {cfg['token']}"} if cfg.get("token") else None
     heartbeat_every = max(1.0, float(cfg["heartbeat_interval"]))
     poll_interval = max(0.5, float(cfg["poll_interval"]))
     last_heartbeat = 0.0
 
-    async with httpx.AsyncClient(base_url=cfg["master_url"], headers=headers, timeout=15.0) as client:
+    async with httpx.AsyncClient(base_url=cfg["master_url"], timeout=15.0) as client:
         while True:
             try:
                 await register_node(client, cfg)

@@ -35,7 +35,6 @@ def settings() -> dict[str, Any]:
         "poll_interval": float(os.environ.get("WORKER_POLL_INTERVAL_SECONDS", "5")),
         "heartbeat_interval": float(os.environ.get("WORKER_HEARTBEAT_INTERVAL_SECONDS", "5")),
         "max_profiles": int(os.environ.get("MAX_RUNNING_PROFILES", "15") if os.environ.get("MAX_RUNNING_PROFILES", "15").isdigit() else 15),
-        "token": os.environ.get("AUTH_TOKEN") or os.environ.get("CLOAK_MANAGER_TOKEN"),
     }
 
 

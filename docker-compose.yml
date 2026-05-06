@@ -9,7 +9,6 @@ services:
       - ~/.cloakbrowser-manager:/data
       - ./config:/config:ro
     environment:
-      - AUTH_TOKEN=${AUTH_TOKEN:-}
       - CONFIG_IMPORT_ON_START=${CONFIG_IMPORT_ON_START:-false}
       - CONFIG_DIR=/config
       - MAX_RUNNING_PROFILES=${MAX_RUNNING_PROFILES:-auto}
