@@ -17,6 +17,7 @@ from . import architecture
 from . import biz_repository
 from . import biz_services
 from . import biz_sync
+from . import biz_validation
 from . import database as db
 from . import infra_repository
 from . import infra_services
@@ -267,12 +268,12 @@ async def master_set_provider(req: MasterProviderUpdateRequest):
     return {"active": active}
 
 
-@app.post("/api/master/providers/feishu-cli/validate")
-async def master_validate_feishu_cli_provider():
+@app.post("/api/master/providers/feishu-openapi/validate")
+async def master_validate_feishu_openapi_provider():
     return {
-        "provider": "feishu_cli",
+        "provider": "feishu_openapi",
         "ready": False,
-        "message": "feishu_cli provider is reserved and not implemented yet",
+        "message": "feishu_openapi provider is not configured yet",
     }
 
 
@@ -311,6 +312,11 @@ async def master_list_infra_capabilities():
     return infra_repository.list_capabilities()
 
 
+@app.get("/api/master/biz/input-schemas")
+async def master_list_biz_input_schemas():
+    return biz_validation.list_input_schemas()
+
+
 @app.get("/api/master/infra/profiles")
 async def master_list_infra_profiles():
     return infra_repository.list_profiles()
@@ -323,7 +329,7 @@ async def master_sync_biz_jobs(req: MasterSyncRequest):
         if req.schedule:
             scheduled = []
             for job in result["jobs"]:
-                if job.get("enabled") and not job.get("master_task_id"):
+                if job.get("enabled") and not job.get("master_task_id") and job.get("status") != "invalid":
                     scheduled.append(biz_services.schedule_biz_job(job["id"], infra_services.find_available_worker))
             result["scheduled"] = scheduled
         return result
@@ -364,9 +370,11 @@ async def master_list_biz_artifacts():
 @app.post("/api/master/provision/run")
 async def master_run_provision(req: MasterProvisionRunRequest):
     try:
-        return await run_in_threadpool(master_control.run_provision, dry_run=req.dry_run)
+        return await run_in_threadpool(master_control.run_provision, dry_run=req.dry_run, node_id=req.node_id)
     except NotImplementedError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.get("/api/master/provision/servers")

@@ -293,10 +293,12 @@ export default function App() {
     await refreshCore();
   };
 
-  const runProvision = async (dryRun) => {
+  const runProvision = async (dryRun, nodeId = null) => {
+    const payload = { dry_run: dryRun };
+    if (nodeId) payload.node_id = nodeId;
     const result = await api("/api/master/provision/run", {
       method: "POST",
-      body: JSON.stringify({ dry_run: dryRun })
+      body: JSON.stringify(payload)
     });
     const nextJobId = result?.job?.id;
     if (nextJobId) {
@@ -304,7 +306,7 @@ export default function App() {
       setJobDetail(result);
     }
     setActivePage("infra");
-    setNotice(dryRun ? "演练任务已提交" : "部署任务已提交");
+    setNotice(`${dryRun ? "演练任务" : "部署任务"}已提交${nodeId ? `：${nodeId}` : ""}`);
     await refreshCore();
   };
 
@@ -326,8 +328,8 @@ export default function App() {
   };
 
   const setProvider = async (provider) => {
-    if (provider === "feishu_cli") {
-      setNotice("feishu_cli 预留未实现，暂不能作为服务器提供方");
+    if (provider === "feishu_openapi") {
+      setNotice("feishu_openapi 尚未配置，暂不能作为服务器提供方");
       return;
     }
     await api("/api/master/providers/active", {
@@ -339,7 +341,7 @@ export default function App() {
   };
 
   const validateFeishu = async () => {
-    const result = await api("/api/master/providers/feishu-cli/validate", { method: "POST" });
+    const result = await api("/api/master/providers/feishu-openapi/validate", { method: "POST" });
     setFeishuCheck(result);
   };
 
@@ -636,15 +638,21 @@ function InfraPage({ infraWorkers, infraCapabilities, infraEvents, infraSyncRuns
             <label className="checkbox"><input type="checkbox" checked={showEnabledOnly} onChange={(e) => setShowEnabledOnly(e.target.checked)} />仅启用</label>
           </div>
           <table>
-            <thead><tr><th>节点</th><th>主机</th><th>用户</th><th>状态</th></tr></thead>
+            <thead><tr><th>节点</th><th>主机</th><th>用户</th><th>状态</th><th>操作</th></tr></thead>
             <tbody>
-              {visibleProvisionServers.length === 0 && <EmptyRow colSpan={4} />}
+              {visibleProvisionServers.length === 0 && <EmptyRow colSpan={5} />}
               {visibleProvisionServers.map((server) => (
                 <tr key={server.node_id}>
                   <td>{server.node_id}</td>
                   <td>{server.host}:{server.port || server.ssh_port || 22}</td>
                   <td>{server.username || server.ssh_user || "-"}</td>
                   <td>{server.enabled ? "启用" : "禁用"}</td>
+                  <td>
+                    <div className="button-row compact">
+                      <button className="secondary" onClick={() => runProvision(true, server.node_id)}>演练</button>
+                      <button className="warn" onClick={() => runProvision(false, server.node_id)}>部署</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -936,14 +944,14 @@ function SettingsPage({ providers, provisionServers, setProvider, validateFeishu
           <div className="panel-title"><h3>Provider</h3><span className="muted">当前：{providers.active || "-"}</span></div>
           <div className="button-row">
             {providers.providers?.map((name) => {
-              const reserved = name === "feishu_cli";
+              const reserved = name === "feishu_openapi";
               return (
-                <button key={name} className={providers.active === name ? "" : "secondary"} onClick={() => setProvider(name)} disabled={reserved} title={reserved ? "feishu_cli 预留未实现" : undefined}>
+                <button key={name} className={providers.active === name ? "" : "secondary"} onClick={() => setProvider(name)} disabled={reserved} title={reserved ? "feishu_openapi 尚未配置" : undefined}>
                   {reserved ? `${name}（未实现）` : name}
                 </button>
               );
             })}
-            <button className="secondary" onClick={validateFeishu}>查看 feishu_cli 状态</button>
+            <button className="secondary" onClick={validateFeishu}>查看 feishu_openapi 状态</button>
           </div>
           {feishuCheck && <div className="detail-box">校验结果：{feishuCheck.ready ? "可用" : "未就绪"}（{feishuCheck.message || "-"}）</div>}
         </div>

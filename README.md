@@ -358,7 +358,7 @@ await page.goto("https://example.com");
 - Worker 向 Master 注册并持续心跳上报资源。
 - Master 维护全局任务队列，并将任务分配给目标 Worker。
 - Worker 通过 `pull` 领取任务并上报执行结果。
-- 支持 Provider 抽象：当前可用 `static`，并预留 `feishu_cli` 接口（未实现）。
+- 支持 Provider 抽象：当前可用 `static` 与 `local_json`，并预留 `feishu_openapi` 接口（尚未配置）。
 
 ### 分层架构（非 AI 阶段）
 
@@ -421,8 +421,8 @@ flowchart TD
 | `POST` | `/api/master/tasks/{task_id}/report` | Worker 回报 started/success/failed。 |
 | `GET` | `/api/master/providers` | 查看 Provider 列表与当前激活项。 |
 | `PUT` | `/api/master/providers/active` | 切换当前 Provider。 |
-| `POST` | `/api/master/providers/feishu-cli/validate` | 预留接口，当前返回未实现。 |
-| `POST` | `/api/master/provision/run` | 按当前 Provider 执行批量初始化。 |
+| `POST` | `/api/master/providers/feishu-openapi/validate` | 预留接口，当前返回未配置。 |
+| `POST` | `/api/master/provision/run` | 按当前 Provider 执行批量或单 Worker 初始化，支持 `node_id`。 |
 | `GET` | `/api/master/provision/jobs` | 列出初始化任务。 |
 | `GET` | `/api/master/provision/jobs/{job_id}` | 查看初始化任务详情。 |
 | `POST` | `/api/master/infra/sync` | 从基础设施数据源同步 Worker 服务器清单。 |
@@ -431,6 +431,7 @@ flowchart TD
 | `GET` | `/api/master/infra/profiles` | 查看 Master 汇总的 Worker Profile 运行观测。 |
 | `POST` | `/api/master/biz/sync` | 从业务数据源同步业务任务，可选择同步后调度。 |
 | `GET` | `/api/master/biz/jobs` | 查看内部业务任务状态。 |
+| `GET` | `/api/master/biz/input-schemas` | 查看当前 Master 认可的业务脚本输入 schema。 |
 | `GET` | `/api/master/biz/runs` | 查看业务任务运行记录。 |
 | `GET` | `/api/master/biz/events` | 查看业务事件。 |
 

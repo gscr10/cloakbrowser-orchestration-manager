@@ -78,6 +78,7 @@ class MasterProviderUpdateRequest(BaseModel):
 
 class MasterProvisionRunRequest(BaseModel):
     dry_run: bool = True
+    node_id: str | None = None
 
 
 class MasterSyncRequest(BaseModel):

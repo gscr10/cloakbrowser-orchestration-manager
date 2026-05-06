@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from . import biz_repository as repo
+from . import biz_validation
 from .source_adapters import LocalJsonSource
 
 BIZ_TASKS_PATH = Path(os.environ.get("MASTER_BIZ_TASKS_PATH", "/config/biz_tasks.json"))
@@ -49,6 +50,10 @@ def normalize_biz_job(item: dict[str, Any]) -> dict[str, Any] | None:
         normalized["assigned_worker"] = item.get("assigned_worker")
     if "profile_id" in item:
         normalized["profile_id"] = item.get("profile_id")
+    valid, error_message = biz_validation.validate_job_payload(normalized)
+    if not valid:
+        normalized["status"] = "invalid"
+        normalized["error_message"] = error_message
     return normalized
 
 

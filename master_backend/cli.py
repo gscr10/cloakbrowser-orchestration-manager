@@ -90,13 +90,16 @@ def cmd_providers(client: MasterClient, _args: argparse.Namespace) -> Any:
 
 
 def cmd_set_provider(client: MasterClient, args: argparse.Namespace) -> Any:
-    if args.provider == "feishu_cli":
-        raise ApiError("feishu_cli provider is reserved and not implemented yet")
+    if args.provider == "feishu_openapi":
+        raise ApiError("feishu_openapi provider is not configured yet")
     return client.request("PUT", "/api/master/providers/active", {"provider": args.provider})
 
 
 def cmd_provision_run(client: MasterClient, args: argparse.Namespace) -> Any:
-    return client.request("POST", "/api/master/provision/run", {"dry_run": args.dry_run})
+    payload = {"dry_run": args.dry_run}
+    if args.node_id:
+        payload["node_id"] = args.node_id
+    return client.request("POST", "/api/master/provision/run", payload)
 
 
 def cmd_provision_jobs(client: MasterClient, _args: argparse.Namespace) -> Any:
@@ -145,11 +148,12 @@ def build_parser() -> argparse.ArgumentParser:
     providers.set_defaults(func=cmd_providers)
 
     set_provider = subparsers.add_parser("set-provider")
-    set_provider.add_argument("provider", choices=["static", "feishu_cli"])
+    set_provider.add_argument("provider", choices=["static", "local_json", "feishu_openapi"])
     set_provider.set_defaults(func=cmd_set_provider)
 
     provision_run = subparsers.add_parser("provision-run")
     provision_run.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=True)
+    provision_run.add_argument("--node-id")
     provision_run.set_defaults(func=cmd_provision_run)
 
     provision_jobs = subparsers.add_parser("provision-jobs")
