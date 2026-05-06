@@ -1,0 +1,22 @@
+{
+  "jobs": [
+    {
+      "job_key": "itp-login-demo-001",
+      "source_record_id": "local-rec-001",
+      "enabled": true,
+      "status": "pending_schedule",
+      "run_generation": 1,
+      "script_key": "open_url",
+      "script_version": "v1",
+      "account": "demo@example.com",
+      "target_url": "https://www.baidu.com/s?wd=BTS",
+      "profile_name": "demo-profile",
+      "worker_tags": ["kr", "ticket"],
+      "priority": 10,
+      "max_retries": 1,
+      "params": {
+        "keyword": "BTS"
+      }
+    }
+  ]
+}

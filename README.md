@@ -363,6 +363,39 @@ await page.goto("https://example.com");
 - Worker 通过 `pull` 领取任务并上报执行结果。
 - 支持 Provider 抽象：当前可用 `static`，并预留 `feishu_cli` 接口（未实现）。
 
+### 分层架构（非 AI 阶段）
+
+当前分布式架构按三层建设，避免把 Worker 部署问题和浏览器业务失败混在一起：
+
+- **基础设施控制面**：Worker 服务器清单、desired state、SSH/Docker provision、注册、心跳、资源、Profile 观测、Worker capabilities 和可调度 Worker 查询。
+- **业务自动化控制面**：业务输入同步、`source_record_id + run_generation` 幂等、输入快照、业务任务状态机、调度请求、业务结果和事件。
+- **Worker 执行运行时**：Profile 管理、浏览器运行、脚本模板 registry、自动化执行、日志/截图/URL/title 等结果回传。
+
+```mermaid
+flowchart TD
+    feishuInfra["飞书基础设施表：服务器清单"] --> infraSync["基础设施同步器"]
+    infraSync --> infraDb["基础设施状态库"]
+    infraDb --> provisionSvc["部署管理：SSH 和 Docker"]
+    infraDb --> monitorSvc["资源监控：心跳、资源、Profile"]
+
+    feishuBiz["飞书业务表：账号和自动化输入"] --> bizSync["业务同步器"]
+    bizSync --> bizDb["业务任务状态库"]
+    bizDb --> bizScheduler["业务调度器"]
+
+    monitorSvc --> scheduleContract["调度契约层"]
+    bizScheduler --> scheduleContract
+    scheduleContract --> workerSelect["选择可用 Worker"]
+
+    provisionSvc --> workerInfra["Worker 基础代理"]
+    workerSelect --> workerRuntime["Worker 自动化运行时"]
+    workerRuntime --> profileRuntime["Profile 浏览器运行"]
+    profileRuntime --> scriptTemplate["自动化脚本模板"]
+    scriptTemplate --> bizResult["业务执行结果"]
+    bizResult --> bizDb
+```
+
+第一版可以用 `config/infra_workers.json.example` 和 `config/biz_tasks.json.example` 模拟飞书表。字段保持 `source_record_id`、`run_generation`、`script_key`、`script_version`、`worker_tags` 等 Feishu OpenAPI 可替换结构；后续接入 Feishu 时只替换同步 adapter，不改变 infra/biz 内部状态机。
+
 若需在 Worker 节点启用自动拉取执行循环，设置：
 
 | 变量 | 默认值 | 作用 |
@@ -395,6 +428,14 @@ await page.goto("https://example.com");
 | `POST` | `/api/master/provision/run` | 按当前 Provider 执行批量初始化。 |
 | `GET` | `/api/master/provision/jobs` | 列出初始化任务。 |
 | `GET` | `/api/master/provision/jobs/{job_id}` | 查看初始化任务详情。 |
+| `POST` | `/api/master/infra/sync` | 从基础设施数据源同步 Worker 服务器清单。 |
+| `GET` | `/api/master/infra/workers` | 查看基础设施 Worker desired/actual 状态。 |
+| `GET` | `/api/master/infra/capabilities` | 查看 Worker 上报的脚本能力。 |
+| `GET` | `/api/master/infra/profiles` | 查看 Master 汇总的 Worker Profile 运行观测。 |
+| `POST` | `/api/master/biz/sync` | 从业务数据源同步业务任务，可选择同步后调度。 |
+| `GET` | `/api/master/biz/jobs` | 查看内部业务任务状态。 |
+| `GET` | `/api/master/biz/runs` | 查看业务任务运行记录。 |
+| `GET` | `/api/master/biz/events` | 查看业务事件。 |
 
 ### 静态服务器列表（Provider=static）
 

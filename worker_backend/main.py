@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 import starlette.requests
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from . import automation_runtime
 from . import config_importer
 from . import database as db
 from . import distributed_worker
@@ -704,6 +705,11 @@ async def list_runs():
 @app.get("/api/scheduler/status", response_model=SchedulerStatusResponse)
 async def get_scheduler_status():
     return SchedulerStatusResponse(**scheduler.scheduler_status(browser_mgr))
+
+
+@app.get("/api/automation/templates")
+async def list_automation_templates():
+    return {"templates": automation_runtime.list_templates()}
 
 
 @app.post("/api/scheduler/tick", response_model=SchedulerStatusResponse)

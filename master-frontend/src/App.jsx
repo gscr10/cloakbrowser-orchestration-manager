@@ -20,6 +20,12 @@ export default function App() {
   const [events, setEvents] = useState([]);
   const [providers, setProviders] = useState({ active: "", providers: [] });
   const [provisionServers, setProvisionServers] = useState({ provider: "", servers: [] });
+  const [architectureSummary, setArchitectureSummary] = useState(null);
+  const [infraWorkers, setInfraWorkers] = useState([]);
+  const [infraCapabilities, setInfraCapabilities] = useState([]);
+  const [infraProfiles, setInfraProfiles] = useState([]);
+  const [bizJobs, setBizJobs] = useState([]);
+  const [bizRuns, setBizRuns] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [jobDetail, setJobDetail] = useState(null);
   const [selectedTaskId, setSelectedTaskId] = useState("");
@@ -75,13 +81,32 @@ export default function App() {
   const refreshCore = async () => {
     setLoading(true);
     try {
-      const [nextNodes, nextCluster, nextTasks, nextProviders, nextJobs, nextServers] = await Promise.all([
+      const [
+        nextNodes,
+        nextCluster,
+        nextTasks,
+        nextProviders,
+        nextJobs,
+        nextServers,
+        nextArchitecture,
+        nextInfraWorkers,
+        nextInfraCapabilities,
+        nextInfraProfiles,
+        nextBizJobs,
+        nextBizRuns
+      ] = await Promise.all([
         authedApi("/api/master/nodes"),
         authedApi("/api/master/cluster/status"),
         authedApi("/api/master/tasks"),
         authedApi("/api/master/providers"),
         authedApi("/api/master/provision/jobs"),
-        authedApi("/api/master/provision/servers")
+        authedApi("/api/master/provision/servers"),
+        authedApi("/api/master/architecture/summary"),
+        authedApi("/api/master/infra/workers"),
+        authedApi("/api/master/infra/capabilities"),
+        authedApi("/api/master/infra/profiles"),
+        authedApi("/api/master/biz/jobs"),
+        authedApi("/api/master/biz/runs")
       ]);
       setNodes(nextNodes);
       setCluster(nextCluster);
@@ -89,6 +114,12 @@ export default function App() {
       setProviders(nextProviders);
       setJobs(nextJobs);
       setProvisionServers(nextServers);
+      setArchitectureSummary(nextArchitecture);
+      setInfraWorkers(nextInfraWorkers);
+      setInfraCapabilities(nextInfraCapabilities);
+      setInfraProfiles(nextInfraProfiles);
+      setBizJobs(nextBizJobs);
+      setBizRuns(nextBizRuns);
       if (!selectedTaskId && nextTasks[0]) setSelectedTaskId(nextTasks[0].id);
       if (!selectedJobId && nextJobs[0]) setSelectedJobId(nextJobs[0].id);
       setError("");
@@ -121,7 +152,7 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedJobId) return;
-    api(`/api/master/provision/jobs/${selectedJobId}`).then(setJobDetail).catch(() => setJobDetail(null));
+    authedApi(`/api/master/provision/jobs/${selectedJobId}`).then(setJobDetail).catch(() => setJobDetail(null));
   }, [selectedJobId]);
 
   const createTask = async () => {
@@ -149,6 +180,21 @@ export default function App() {
       setJobDetail(result);
     }
     setNotice(dryRun ? "演练任务已提交" : "部署任务已提交");
+    await refreshCore();
+  };
+
+  const syncInfra = async () => {
+    const result = await authedApi("/api/master/infra/sync", { method: "POST" });
+    setNotice(`基础设施同步完成：${result.count || 0} 条`);
+    await refreshCore();
+  };
+
+  const syncBiz = async (schedule = false) => {
+    const result = await authedApi("/api/master/biz/sync", {
+      method: "POST",
+      body: JSON.stringify({ schedule })
+    });
+    setNotice(schedule ? `业务同步并调度完成：${result.count || 0} 条` : `业务同步完成：${result.count || 0} 条`);
     await refreshCore();
   };
 
@@ -221,9 +267,53 @@ export default function App() {
         <div className="card"><span>成功/失败</span><strong>{taskStats.success}/{taskStats.failed}</strong></div>
       </section>
 
+      <section className="grid three">
+        <div className="panel section-panel">
+          <h2>基础设施流</h2>
+          <p>只管理 Worker 服务器、部署、心跳、资源、能力和可调度状态。</p>
+          <div className="mini-stats">
+            <span>Worker：<b>{architectureSummary?.infra?.workers ?? infraWorkers.length}</b></span>
+            <span>在线：<b>{architectureSummary?.infra?.online ?? totals.online}</b></span>
+            <span>待部署：<b>{architectureSummary?.infra?.pending_deploy ?? 0}</b></span>
+            <span>能力：<b>{infraCapabilities.length}</b></span>
+          </div>
+          <div className="row wrap">
+            <button onClick={syncInfra}>同步基础设施 JSON</button>
+            <button onClick={() => runProvision(true)}>部署演练</button>
+            <button className="warn" onClick={() => runProvision(false)}>真实部署</button>
+          </div>
+        </div>
+
+        <div className="panel section-panel">
+          <h2>业务任务流</h2>
+          <p>只处理自动化输入、参数快照、幂等、调度请求、执行结果和回写状态。</p>
+          <div className="mini-stats">
+            <span>业务任务：<b>{architectureSummary?.biz?.jobs ?? bizJobs.length}</b></span>
+            <span>待调度：<b>{architectureSummary?.biz?.pending_schedule ?? 0}</b></span>
+            <span>已分配：<b>{architectureSummary?.biz?.assigned ?? 0}</b></span>
+            <span>运行记录：<b>{bizRuns.length}</b></span>
+          </div>
+          <div className="row wrap">
+            <button onClick={() => syncBiz(false)}>同步业务 JSON</button>
+            <button onClick={() => syncBiz(true)}>同步并调度</button>
+          </div>
+        </div>
+
+        <div className="panel section-panel">
+          <h2>Profile / Worker 监控</h2>
+          <p>从 Worker 心跳汇总运行中 Profile、资源和 VNC/CDP 入口信息。</p>
+          <div className="mini-stats">
+            <span>运行 Profile：<b>{architectureSummary?.infra?.running_profiles ?? totals.running}</b></span>
+            <span>Profile 观测：<b>{infraProfiles.length}</b></span>
+            <span>Master 队列：<b>{totals.queued}</b></span>
+            <span>执行中任务：<b>{totals.running}</b></span>
+          </div>
+        </div>
+      </section>
+
       <section className="grid two">
         <div className="panel">
-          <h2>提供方</h2>
+          <h2>基础设施：提供方</h2>
           <p>当前：<b>{providers.active || "-"}</b></p>
           <div className="row wrap">
             {providers.providers?.map((name) => {
@@ -245,7 +335,7 @@ export default function App() {
         </div>
 
         <div className="panel">
-          <h2>批量部署</h2>
+          <h2>基础设施：批量部署</h2>
           <p>提供方：<b>{provisionServers.provider || providers.active || "-"}</b></p>
           <p>服务器数：<b>{provisionServers.servers?.length || 0}</b></p>
           <div className="row">
@@ -257,7 +347,7 @@ export default function App() {
 
       <section className="grid two">
         <div className="panel">
-          <h2>节点</h2>
+          <h2>Profile / Worker 监控：节点</h2>
           <table>
             <thead><tr><th>节点</th><th>状态</th><th>负载</th><th>内存</th></tr></thead>
             <tbody>
@@ -274,7 +364,7 @@ export default function App() {
         </div>
 
         <div className="panel">
-          <h2>创建 Master 任务</h2>
+          <h2>业务任务：创建 Master 任务</h2>
           <div className="form">
             <input value={newTask.profile_id} onChange={(e) => setNewTask({ ...newTask, profile_id: e.target.value })} placeholder="profile_id（可选）" />
             <input value={newTask.authorized_target} onChange={(e) => setNewTask({ ...newTask, authorized_target: e.target.value })} placeholder="authorized_target" />
@@ -294,7 +384,7 @@ export default function App() {
 
       <section className="grid three">
         <div className="panel">
-          <h2>部署服务器列表</h2>
+          <h2>基础设施：部署服务器列表</h2>
           <div className="row between">
             <p>显示：<b>{visibleProvisionServers.length}</b> / {provisionServers.servers?.length || 0}</p>
             <label className="checkbox">
@@ -318,7 +408,7 @@ export default function App() {
         </div>
 
         <div className="panel">
-          <h2>Master 任务</h2>
+          <h2>业务任务：Master 任务</h2>
           <select value={selectedTaskId} onChange={(e) => setSelectedTaskId(e.target.value)}>
             <option value="">选择任务</option>
             {tasks.map((t) => (
@@ -344,7 +434,7 @@ export default function App() {
         </div>
 
         <div className="panel">
-          <h2>部署任务</h2>
+          <h2>基础设施：部署任务</h2>
           <select value={selectedJobId} onChange={(e) => setSelectedJobId(e.target.value)}>
             <option value="">选择任务</option>
             {jobs.map((j) => (

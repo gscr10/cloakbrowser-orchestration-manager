@@ -173,8 +173,9 @@ class ProxyImportResponse(BaseModel):
 class TaskCreate(BaseModel):
     profile_id: str
     authorized_target: str
-    task_type: Literal["open_url", "external_cdp"] = "open_url"
+    task_type: Literal["open_url", "external_cdp", "automation_script"] = "open_url"
     url: str | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
     timeout_seconds: int = Field(default=300, ge=1, le=86400)
 
     @field_validator("authorized_target")
@@ -204,6 +205,7 @@ class TaskResponse(BaseModel):
     proxy_id: str | None = None
     run_id: str | None = None
     failure_reason: str | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
     created_at: str
     updated_at: str
 

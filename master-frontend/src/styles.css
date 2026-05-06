@@ -29,6 +29,9 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .panel { background: #111a2c; border: 1px solid #24334f; border-radius: 12px; padding: 12px; }
 .panel h2 { margin: 0 0 10px; font-size: 16px; }
+.section-panel { min-height: 160px; }
+.mini-stats { display: grid; gap: 6px; margin: 10px 0; color: #9eb1cf; font-size: 13px; }
+.mini-stats b { color: #e6edf7; }
 
 .row { display: flex; gap: 8px; align-items: center; }
 .row.wrap { flex-wrap: wrap; }

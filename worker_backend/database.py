@@ -88,6 +88,7 @@ def init_db():
                 authorized_target TEXT NOT NULL,
                 task_type TEXT NOT NULL,
                 url TEXT,
+                payload_json TEXT NOT NULL DEFAULT '{}',
                 status TEXT NOT NULL,
                 proxy_id TEXT REFERENCES proxy_endpoints(id),
                 run_id TEXT,
@@ -118,6 +119,10 @@ def init_db():
             conn.commit()
         if "launch_args" not in cols:
             conn.execute("ALTER TABLE profiles ADD COLUMN launch_args TEXT DEFAULT '[]'")
+            conn.commit()
+        task_cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        if "payload_json" not in task_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}'")
             conn.commit()
 
 
@@ -380,16 +385,17 @@ def create_task(
     task_type: str,
     timeout_seconds: int,
     url: str | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     task_id = str(uuid.uuid4())
     now = _now()
     with get_db() as conn:
         conn.execute(
             """INSERT INTO tasks (
-                id, profile_id, authorized_target, task_type, url, status,
+                id, profile_id, authorized_target, task_type, url, payload_json, status,
                 timeout_seconds, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (task_id, profile_id, authorized_target, task_type, url, "queued", timeout_seconds, now, now),
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (task_id, profile_id, authorized_target, task_type, url, json.dumps(payload or {}), "queued", timeout_seconds, now, now),
         )
         conn.commit()
     return get_task(task_id)  # type: ignore[return-value]
@@ -398,13 +404,13 @@ def create_task(
 def get_task(task_id: str) -> dict[str, Any] | None:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        return dict(row) if row else None
+        return _task_from_row(row) if row else None
 
 
 def list_tasks() -> list[dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
-        return [dict(row) for row in rows]
+        return [_task_from_row(row) for row in rows]
 
 
 def next_queued_task() -> dict[str, Any] | None:
@@ -412,12 +418,14 @@ def next_queued_task() -> dict[str, Any] | None:
         row = conn.execute(
             "SELECT * FROM tasks WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1"
         ).fetchone()
-        return dict(row) if row else None
+        return _task_from_row(row) if row else None
 
 
 def update_task(task_id: str, **fields: Any) -> dict[str, Any] | None:
     if not fields:
         return get_task(task_id)
+    if "payload" in fields:
+        fields["payload_json"] = json.dumps(fields.pop("payload") or {})
     fields["updated_at"] = _now()
     cols = [f"{key} = ?" for key in fields]
     vals = list(fields.values()) + [task_id]
@@ -425,6 +433,15 @@ def update_task(task_id: str, **fields: Any) -> dict[str, Any] | None:
         conn.execute(f"UPDATE tasks SET {', '.join(cols)} WHERE id = ?", vals)
         conn.commit()
     return get_task(task_id)
+
+
+def _task_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    task = dict(row)
+    try:
+        task["payload"] = json.loads(task.pop("payload_json") or "{}")
+    except json.JSONDecodeError:
+        task["payload"] = {}
+    return task
 
 
 def create_profile_run(
