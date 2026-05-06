@@ -213,7 +213,21 @@ async def master_report_task(task_id: str, req: MasterTaskReportRequest):
         retry_count = int(task.get("retry_count") or 0)
         max_retries = int(task.get("max_retries") or 0)
         if retry_count < max_retries:
-            target = master_control.pick_target_node()
+            if payload.get("task_type") == "automation_script":
+                required_capabilities = []
+                if payload.get("script_key"):
+                    required_capabilities.append(
+                        {
+                            "script_key": payload.get("script_key"),
+                            "script_version": payload.get("script_version") or "v1",
+                        }
+                    )
+                target = infra_services.find_available_worker(
+                    worker_tags=payload.get("worker_tags") or [],
+                    required_capabilities=required_capabilities,
+                )
+            else:
+                target = master_control.pick_target_node()
             updated = db.update_master_task(
                 task_id,
                 status="queued",
@@ -270,14 +284,16 @@ async def master_architecture_summary():
 @app.post("/api/master/infra/sync")
 async def master_sync_infra_workers():
     try:
-        return infra_sync.sync_infra_workers()
+        result = infra_sync.sync_infra_workers()
+        result["workers"] = infra_repository.public_worker_views(result.get("workers") or [])
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/master/infra/workers")
 async def master_list_infra_workers():
-    return infra_repository.list_workers()
+    return infra_repository.public_worker_views(infra_repository.list_workers())
 
 
 @app.get("/api/master/infra/events")

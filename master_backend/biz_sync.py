@@ -5,13 +5,14 @@ from pathlib import Path
 from typing import Any
 
 from . import biz_repository as repo
-from .json_sources import load_items
+from .source_adapters import LocalJsonSource
 
 BIZ_TASKS_PATH = Path(os.environ.get("MASTER_BIZ_TASKS_PATH", "/config/biz_tasks.json"))
 
 
 def local_biz_tasks(path: Path | None = None) -> list[dict[str, Any]]:
-    return load_items(path or BIZ_TASKS_PATH, "jobs")
+    source = LocalJsonSource(infra_workers_path=Path("/dev/null"), biz_tasks_path=path or BIZ_TASKS_PATH)
+    return source.list_jobs()
 
 
 def normalize_biz_job(item: dict[str, Any]) -> dict[str, Any] | None:
@@ -26,7 +27,7 @@ def normalize_biz_job(item: dict[str, Any]) -> dict[str, Any] | None:
     status = item.get("status") or "imported"
     if status == "pending":
         status = "pending_schedule"
-    return {
+    normalized = {
         "job_key": job_key,
         "source": item.get("source") or "local_json",
         "source_record_id": source_record_id,
@@ -43,9 +44,12 @@ def normalize_biz_job(item: dict[str, Any]) -> dict[str, Any] | None:
         "priority": int(item.get("priority") or 0),
         "max_retries": int(item.get("max_retries") or 1),
         "params": item.get("params_json") or item.get("params") or {},
-        "assigned_worker": item.get("assigned_worker"),
-        "profile_id": item.get("profile_id"),
     }
+    if "assigned_worker" in item:
+        normalized["assigned_worker"] = item.get("assigned_worker")
+    if "profile_id" in item:
+        normalized["profile_id"] = item.get("profile_id")
+    return normalized
 
 
 def sync_biz_jobs(path: Path | None = None) -> dict[str, Any]:

@@ -75,9 +75,10 @@ async def tick(browser_mgr: BrowserManager, task_id: str | None = None) -> dict[
     try:
         running = await browser_mgr.launch(runtime_profile)
         result = await profile_runtime.execute_task(running, task)
-        if task["task_type"] == "automation_script" and result:
+        if task["task_type"] in {"open_url", "automation_script"}:
             payload = dict(task.get("payload") or {})
-            payload["result"] = result
+            if result:
+                payload["result"] = result
             db.update_task(task["id"], status="success", payload=payload)
         db.update_profile_run(run["id"], status="running")
     except Exception as exc:

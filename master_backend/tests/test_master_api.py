@@ -116,6 +116,7 @@ def test_master_local_json_infra_sync(master_app_client: TestClient, tmp_path: P
                         "node_id": "worker-json",
                         "host": "10.0.0.20",
                         "ssh_user": "root",
+                        "ssh_password": "secret-password",
                         "ssh_port": 2222,
                         "desired_state": "active",
                         "tags": ["kr", "ticket"],
@@ -131,11 +132,15 @@ def test_master_local_json_infra_sync(master_app_client: TestClient, tmp_path: P
     sync = master_app_client.post("/api/master/infra/sync")
     assert sync.status_code == 200
     assert sync.json()["count"] == 1
+    assert "ssh_password" not in sync.json()["workers"][0]
+    assert sync.json()["workers"][0]["ssh_password_set"] is True
 
     workers = master_app_client.get("/api/master/infra/workers")
     assert workers.status_code == 200
     assert workers.json()[0]["node_id"] == "worker-json"
     assert workers.json()[0]["tags"] == ["kr", "ticket"]
+    assert "ssh_password" not in workers.json()[0]
+    assert workers.json()[0]["ssh_password_set"] is True
 
 
 def test_master_local_json_biz_sync_and_schedule(master_app_client: TestClient, tmp_path: Path, monkeypatch):
@@ -199,6 +204,77 @@ def test_master_local_json_biz_sync_and_schedule(master_app_client: TestClient, 
     assert task["task_type"] == "automation_script"
     assert task["payload"]["script_key"] == "open_url"
     assert task["target_node_id"] == "worker-a"
+
+
+def test_master_biz_resync_preserves_running_state(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    workers_path = tmp_path / "infra_workers.json"
+    workers_path.write_text(
+        json.dumps({"workers": [{"node_id": "worker-a", "host": "10.0.0.10", "tags": ["kr", "ticket"]}]}),
+        encoding="utf-8",
+    )
+    jobs_path = tmp_path / "biz_tasks.json"
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "job_key": "ticket-1",
+                        "source_record_id": "rec-preserve",
+                        "run_generation": 1,
+                        "script_key": "open_url",
+                        "script_version": "v1",
+                        "target_url": "https://example.com/original",
+                        "worker_tags": ["kr", "ticket"],
+                        "params": {"account": "demo"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(infra_sync, "INFRA_WORKERS_PATH", workers_path)
+    monkeypatch.setattr(biz_sync, "BIZ_TASKS_PATH", jobs_path)
+    assert master_app_client.post("/api/master/infra/sync").status_code == 200
+    master_app_client.post(
+        "/api/master/nodes/register",
+        json={
+            "node_id": "worker-a",
+            "hostname": "worker-a.local",
+            "max_profiles": 10,
+            "capabilities": [{"script_key": "open_url", "script_version": "v1"}],
+        },
+    )
+    scheduled = master_app_client.post("/api/master/biz/sync", json={"schedule": True}).json()["scheduled"][0]
+
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "job_key": "ticket-1",
+                        "source_record_id": "rec-preserve",
+                        "run_generation": 1,
+                        "script_key": "open_url",
+                        "script_version": "v1",
+                        "status": "pending_schedule",
+                        "target_url": "https://example.com/edited",
+                        "worker_tags": ["wrong-tag"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    resync = master_app_client.post("/api/master/biz/sync", json={"schedule": True})
+    assert resync.status_code == 200
+
+    job = master_app_client.get("/api/master/biz/jobs").json()[0]
+    assert job["id"] == scheduled["id"]
+    assert job["status"] == "assigned"
+    assert job["assigned_worker"] == "worker-a"
+    assert job["master_task_id"] == scheduled["master_task_id"]
+    assert job["target_url"] == "https://example.com/original"
+    assert job["worker_tags"] == ["kr", "ticket"]
 
 
 def test_master_biz_schedule_waits_when_infra_worker_disabled(master_app_client: TestClient, tmp_path: Path, monkeypatch):
@@ -469,6 +545,115 @@ def test_master_failed_task_is_requeued_with_retry(master_app_client: TestClient
     data = failed.json()
     assert data["status"] == "queued"
     assert data["retry_count"] == 1
+
+
+def test_master_retry_uses_infra_scheduling_contract(master_app_client: TestClient):
+    from master_backend import database as db
+
+    master_app_client.post(
+        "/api/master/nodes/register",
+        json={
+            "node_id": "worker-a",
+            "hostname": "worker-a.local",
+            "max_profiles": 10,
+            "tags": ["ticket"],
+            "capabilities": [{"script_key": "open_url", "script_version": "v1"}],
+        },
+    )
+    master_app_client.post(
+        "/api/master/nodes/register",
+        json={
+            "node_id": "worker-b",
+            "hostname": "worker-b.local",
+            "max_profiles": 10,
+            "tags": [],
+            "capabilities": [],
+        },
+    )
+    master_app_client.post(
+        "/api/master/nodes/heartbeat",
+        json={"node_id": "worker-a", "running_profiles": 5, "status": "online"},
+    )
+    master_app_client.post(
+        "/api/master/nodes/heartbeat",
+        json={"node_id": "worker-b", "running_profiles": 0, "status": "online"},
+    )
+    task = db.create_master_task(
+        profile_id="profile-a",
+        authorized_target="ticket flow",
+        task_type="automation_script",
+        payload={
+            "profile_id": "profile-a",
+            "task_type": "automation_script",
+            "authorized_target": "ticket flow",
+            "script_key": "open_url",
+            "script_version": "v1",
+            "worker_tags": ["ticket"],
+        },
+        max_retries=1,
+        target_node_id="worker-a",
+    )
+
+    failed = master_app_client.post(
+        f"/api/master/tasks/{task['id']}/report",
+        json={"node_id": "worker-a", "status": "failed", "failure_reason": "transient"},
+    )
+
+    assert failed.status_code == 200
+    data = failed.json()
+    assert data["status"] == "queued"
+    assert data["retry_count"] == 1
+    assert data["target_node_id"] == "worker-a"
+
+
+def test_master_success_report_persists_artifacts_and_writeback_event(master_app_client: TestClient):
+    from master_backend import database as db
+
+    master_app_client.post(
+        "/api/master/nodes/register",
+        json={"node_id": "worker-a", "hostname": "worker-a.local", "max_profiles": 10},
+    )
+    job = db.upsert_biz_job(
+        {
+            "job_key": "artifact-job",
+            "source_record_id": "artifact-rec",
+            "run_generation": 1,
+            "status": "assigned",
+            "script_key": "open_url",
+            "script_version": "v1",
+        }
+    )
+    task = db.create_master_task(
+        profile_id="profile-a",
+        authorized_target="artifact target",
+        task_type="automation_script",
+        payload={"biz_job_id": job["id"], "profile_id": "profile-a", "task_type": "automation_script"},
+        target_node_id="worker-a",
+    )
+    result = {
+        "url": "https://example.com",
+        "artifacts": [
+            {
+                "type": "screenshot",
+                "uri": "file:///data/artifacts/shot.png",
+                "label": "final page",
+            }
+        ],
+    }
+
+    resp = master_app_client.post(
+        f"/api/master/tasks/{task['id']}/report",
+        json={"node_id": "worker-a", "status": "success", "result": result},
+    )
+
+    assert resp.status_code == 200
+    artifacts = master_app_client.get("/api/master/biz/artifacts").json()
+    assert artifacts[0]["biz_job_id"] == job["id"]
+    assert artifacts[0]["artifact_type"] == "screenshot"
+    assert artifacts[0]["uri"] == "file:///data/artifacts/shot.png"
+    assert artifacts[0]["metadata"] == {"label": "final page"}
+    events = master_app_client.get("/api/master/biz/events").json()
+    assert any(event["event_type"] == "biz_writeback_skipped" for event in events)
 
 
 def test_master_external_cdp_auto_fills_profile_id_on_pull(master_app_client: TestClient, monkeypatch):

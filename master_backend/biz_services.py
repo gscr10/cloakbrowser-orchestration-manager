@@ -4,6 +4,7 @@ from typing import Any, Protocol
 
 from . import biz_repository as repo
 from . import database as db
+from . import writeback
 
 
 class WorkerSchedulerContract(Protocol):
@@ -118,6 +119,37 @@ def mark_task_retrying(task: dict[str, Any], node_id: str, failure_reason: str |
     repo.create_event(biz_job_id, "job_failed_retrying", failure_reason, node_id)
 
 
+def _result_artifacts(result: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not result:
+        return []
+    candidates: list[Any] = []
+    if isinstance(result.get("artifacts"), list):
+        candidates.extend(result["artifacts"])
+    nested = result.get("result")
+    if isinstance(nested, dict) and isinstance(nested.get("artifacts"), list):
+        candidates.extend(nested["artifacts"])
+    return [item for item in candidates if isinstance(item, dict)]
+
+
+def _persist_artifacts(biz_job_id: str, run_id: str | None, result: dict[str, Any] | None) -> None:
+    for item in _result_artifacts(result):
+        uri = item.get("uri") or item.get("url") or item.get("path")
+        if not uri:
+            continue
+        artifact_type = item.get("artifact_type") or item.get("type") or "file"
+        metadata = {key: value for key, value in item.items() if key not in {"uri", "url", "path", "artifact_type", "type"}}
+        repo.create_artifact(biz_job_id, run_id, str(artifact_type), str(uri), metadata)
+
+
+def _record_writeback(biz_job_id: str, status: str, payload: dict[str, Any], node_id: str) -> None:
+    job = repo.get_job(biz_job_id)
+    if not job:
+        return
+    result = writeback.write_biz_status(job, status, payload)
+    event_type = "biz_writeback_success" if result.get("written") else "biz_writeback_skipped"
+    repo.create_event(biz_job_id, event_type, str(result), node_id)
+
+
 def mark_task_finished(task: dict[str, Any], node_id: str, status: str, result: dict[str, Any] | None = None, failure_reason: str | None = None) -> None:
     payload = task.get("payload") or {}
     biz_job_id = payload.get("biz_job_id")
@@ -136,10 +168,13 @@ def mark_task_finished(task: dict[str, Any], node_id: str, status: str, result: 
             error_message=None,
             last_run_at=dt.datetime.now(dt.timezone.utc).isoformat(),
         )
-        repo.upsert_run(biz_job_id, task["id"], node_id, "success", result=result or {})
+        run = repo.upsert_run(biz_job_id, task["id"], node_id, "success", result=result or {})
+        _persist_artifacts(biz_job_id, run.get("id"), result or {})
+        _record_writeback(biz_job_id, "success", {"result_summary": summary, "result": result or {}}, node_id)
         repo.create_event(biz_job_id, "job_success", summary, node_id)
         return
     if status == "failed":
         repo.update_job(biz_job_id, status="final_failed", error_message=failure_reason)
         repo.upsert_run(biz_job_id, task["id"], node_id, "final_failed", error_message=failure_reason)
+        _record_writeback(biz_job_id, "final_failed", {"error_message": failure_reason}, node_id)
         repo.create_event(biz_job_id, "job_failed", failure_reason, node_id)

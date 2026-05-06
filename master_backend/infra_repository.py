@@ -17,6 +17,17 @@ def list_workers() -> list[dict[str, Any]]:
     return db.list_infra_workers()
 
 
+def public_worker_view(worker: dict[str, Any]) -> dict[str, Any]:
+    view = dict(worker)
+    password = view.pop("ssh_password", None)
+    view["ssh_password_set"] = bool(password)
+    return view
+
+
+def public_worker_views(workers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [public_worker_view(worker) for worker in workers]
+
+
 def replace_capabilities(node_id: str, capabilities: list[dict[str, Any]]) -> None:
     db.replace_infra_worker_capabilities(node_id, capabilities)
 
