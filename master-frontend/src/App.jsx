@@ -828,6 +828,8 @@ function BizPage({ bizJobs, bizRuns, bizArtifacts, selectedBizJob, setSelectedBi
 }
 
 function ProfilesPage({ infraProfiles, nodes, tasks, selectedTaskId, setSelectedTaskId, taskDetail, taskEvents, createTask, newTask, setNewTask }) {
+  const runningProfiles = infraProfiles.filter((p) => p.status === "running").length;
+  const stoppedProfiles = infraProfiles.filter((p) => p.status === "stopped").length;
   return (
     <div className="page-stack">
       <section className="page-header-card">
@@ -839,8 +841,9 @@ function ProfilesPage({ infraProfiles, nodes, tasks, selectedTaskId, setSelected
       </section>
 
       <section className="stat-grid">
-        <StatCard label="运行中 Profile" value={infraProfiles.filter((p) => p.status === "running").length} tone="success" />
-        <StatCard label="观测 Profile" value={infraProfiles.length} />
+        <StatCard label="运行中 Profile" value={runningProfiles} tone="success" />
+        <StatCard label="观测记录" value={infraProfiles.length} hint="含已停止记录" />
+        <StatCard label="已停止记录" value={stoppedProfiles} />
         <StatCard label="运行中任务" value={tasks.filter((t) => t.status === "running").length} />
         <StatCard label="可用节点" value={nodes.filter((n) => n.status === "online").length} />
       </section>
