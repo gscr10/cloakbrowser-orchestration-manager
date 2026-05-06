@@ -337,6 +337,46 @@ def test_master_biz_schedule_waits_when_infra_worker_disabled(master_app_client:
     assert master_app_client.get("/api/master/tasks").json() == []
 
 
+def test_master_biz_sync_marks_invalid_input(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    jobs_path = tmp_path / "biz_tasks.json"
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "job_key": "missing-target",
+                        "source_record_id": "rec-invalid",
+                        "run_generation": 1,
+                        "script_key": "open_url",
+                        "script_version": "v1",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(biz_sync, "BIZ_TASKS_PATH", jobs_path)
+
+    sync = master_app_client.post("/api/master/biz/sync", json={"schedule": True})
+
+    assert sync.status_code == 200
+    job = sync.json()["jobs"][0]
+    assert job["status"] == "invalid"
+    assert "target_url" in job["error_message"]
+    assert sync.json()["scheduled"] == []
+
+
+def test_master_lists_biz_input_schemas(master_app_client: TestClient):
+    resp = master_app_client.get("/api/master/biz/input-schemas")
+    assert resp.status_code == 200
+    assert {
+        "script_key": "open_url",
+        "script_version": "v1",
+        "input_schema_version": "v1",
+        "required_fields": ["target_url"],
+    } in resp.json()
+
+
 def test_master_profile_auto_selection_skips_running_profiles(monkeypatch):
     class FakeResponse:
         def __init__(self, body):
@@ -831,14 +871,15 @@ def test_master_provider_and_provision_dry_run(master_app_client: TestClient, tm
     providers = master_app_client.get("/api/master/providers")
     assert providers.status_code == 200
     assert "static" in providers.json()["providers"]
+    assert "feishu_openapi" in providers.json()["providers"]
 
     set_provider = master_app_client.put("/api/master/providers/active", json={"provider": "static"})
     assert set_provider.status_code == 200
     assert set_provider.json()["active"] == "static"
 
-    reserved_provider = master_app_client.put("/api/master/providers/active", json={"provider": "feishu_cli"})
+    reserved_provider = master_app_client.put("/api/master/providers/active", json={"provider": "feishu_openapi"})
     assert reserved_provider.status_code == 422
-    assert "not implemented yet" in reserved_provider.json()["detail"]
+    assert "not configured yet" in reserved_provider.json()["detail"]
 
     provision = master_app_client.post("/api/master/provision/run", json={"dry_run": True})
     assert provision.status_code == 200
@@ -867,10 +908,34 @@ def test_master_provision_endpoint_runs_in_threadpool(master_app_client: TestCli
 
     monkeypatch.setattr(master_main, "run_in_threadpool", fake_run_in_threadpool)
 
-    resp = master_app_client.post("/api/master/provision/run", json={"dry_run": False})
+    resp = master_app_client.post("/api/master/provision/run", json={"dry_run": False, "node_id": "worker-a"})
     assert resp.status_code == 200
     assert captured["func"] is master_control.run_provision
-    assert captured["kwargs"] == {"dry_run": False}
+    assert captured["kwargs"] == {"dry_run": False, "node_id": "worker-a"}
+
+
+def test_master_provision_can_target_single_worker(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    server_list = tmp_path / "servers.json"
+    server_list.write_text(
+        json.dumps(
+            {
+                "servers": [
+                    {"node_id": "worker-a", "host": "10.0.0.10", "username": "root", "enabled": True},
+                    {"node_id": "worker-b", "host": "10.0.0.11", "username": "root", "enabled": True},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(master_control, "SERVER_LIST_PATH", server_list)
+    master_app_client.put("/api/master/providers/active", json={"provider": "static"})
+
+    resp = master_app_client.post("/api/master/provision/run", json={"dry_run": True, "node_id": "worker-b"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["job"]["total_servers"] == 1
+    assert [item["node_id"] for item in data["items"]] == ["worker-b"]
 
 
 def test_master_provision_servers_endpoint(master_app_client: TestClient, tmp_path: Path, monkeypatch):

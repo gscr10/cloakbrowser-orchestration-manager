@@ -137,15 +137,15 @@ class LocalJsonProvider(ServerProvider):
         return out
 
 
-class FeishuCliProvider(ServerProvider):
-    name = "feishu_cli"
+class FeishuOpenApiProvider(ServerProvider):
+    name = "feishu_openapi"
 
     def get_servers(self) -> list[ServerRecord]:
-        raise NotImplementedError("feishu_cli provider is reserved and not implemented yet")
+        raise NotImplementedError("feishu_openapi provider is not configured yet")
 
 
 def available_providers() -> dict[str, ServerProvider]:
-    return {"static": StaticProvider(), "local_json": LocalJsonProvider(), "feishu_cli": FeishuCliProvider()}
+    return {"static": StaticProvider(), "local_json": LocalJsonProvider(), "feishu_openapi": FeishuOpenApiProvider()}
 
 
 def get_active_provider_name() -> str:
@@ -155,8 +155,8 @@ def get_active_provider_name() -> str:
 def set_active_provider_name(name: str) -> str:
     if name not in available_providers():
         raise ValueError("provider not supported")
-    if name == "feishu_cli":
-        raise ValueError("feishu_cli provider is reserved and not implemented yet")
+    if name == "feishu_openapi":
+        raise ValueError("feishu_openapi provider is not configured yet")
     db.set_master_setting(ACTIVE_PROVIDER_KEY, name)
     return name
 
@@ -392,10 +392,14 @@ def execute_provision(record: ServerRecord, dry_run: bool, cfg: ProvisionConfig)
     return True, (proc.stdout or "ok").strip()
 
 
-def run_provision(dry_run: bool = True) -> dict[str, Any]:
+def run_provision(dry_run: bool = True, node_id: str | None = None) -> dict[str, Any]:
     cfg = load_provision_config()
     provider = get_active_provider()
     records = [record for record in provider.get_servers() if record.enabled]
+    if node_id:
+        records = [record for record in records if record.node_id == node_id]
+        if not records:
+            raise ValueError(f"provision target not found: {node_id}")
     for record in records:
         _record_provision_target(record, provider.name, "pending_deploy" if dry_run else "deploying")
     job = db.create_provision_job(provider=provider.name, total_servers=len(records), dry_run=dry_run)

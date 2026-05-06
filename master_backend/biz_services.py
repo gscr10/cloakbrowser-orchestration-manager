@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from . import biz_repository as repo
+from . import biz_validation
 from . import database as db
 from . import writeback
 
@@ -42,6 +43,10 @@ def schedule_biz_job(job_id: str, find_worker: WorkerSchedulerContract) -> dict[
         raise ValueError("biz job is disabled")
     if job.get("master_task_id"):
         return job
+    valid, error_message = biz_validation.validate_job_payload(job)
+    if not valid:
+        repo.create_event(job["id"], "job_input_invalid", error_message)
+        return repo.update_job(job["id"], status="invalid", error_message=error_message) or job
 
     payload = build_master_task_payload(job)
     target = find_worker(

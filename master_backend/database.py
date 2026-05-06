@@ -466,7 +466,7 @@ def upsert_infra_worker(payload: dict[str, Any]) -> dict[str, Any]:
         "ssh_password": payload.get("ssh_password") or payload.get("password"),
         "ssh_port": int(payload.get("ssh_port") or payload.get("port") or 22),
         "enabled": int(bool(payload.get("enabled", True))),
-        "desired_state": payload.get("desired_state") or "online",
+        "desired_state": payload.get("desired_state") or "active",
         "status": payload.get("status") or "imported",
         "max_profiles": int(payload.get("max_profiles") or 15),
         "region": payload.get("region"),
