@@ -28,7 +28,7 @@ def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
-_BIZ_EXECUTION_STATUSES = {"assigned", "dispatched", "running", "success", "failed", "final_failed"}
+_BIZ_EXECUTION_STATUSES = {"assigned", "dispatched", "running", "success", "failed", "final_failed", "cancelled"}
 _BIZ_SOURCE_FIELDS = {
     "status",
     "script_key",
@@ -78,6 +78,7 @@ def init_db():
                 failure_reason TEXT,
                 retry_count INTEGER NOT NULL DEFAULT 0,
                 max_retries INTEGER NOT NULL DEFAULT 1,
+                priority INTEGER NOT NULL DEFAULT 0,
                 timeout_seconds INTEGER NOT NULL DEFAULT 300,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -268,6 +269,10 @@ def init_db():
         if "input_schema_version" not in cap_cols:
             conn.execute("ALTER TABLE infra_worker_capabilities ADD COLUMN input_schema_version TEXT NOT NULL DEFAULT 'v1'")
             conn.commit()
+        task_cols = {row[1] for row in conn.execute("PRAGMA table_info(master_tasks)").fetchall()}
+        if "priority" not in task_cols:
+            conn.execute("ALTER TABLE master_tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+            conn.commit()
         conn.commit()
 
 
@@ -318,11 +323,11 @@ def get_master_setting(key: str) -> str | None:
         return row["value"] if row else None
 
 
-def create_master_task(authorized_target: str, task_type: str, payload: dict[str, Any], profile_id: str | None = None, timeout_seconds: int = 300, max_retries: int = 1, target_node_id: str | None = None) -> dict[str, Any]:
+def create_master_task(authorized_target: str, task_type: str, payload: dict[str, Any], profile_id: str | None = None, timeout_seconds: int = 300, max_retries: int = 1, target_node_id: str | None = None, priority: int = 0) -> dict[str, Any]:
     now = _now()
     task_id = str(uuid.uuid4())
     with get_db() as conn:
-        conn.execute("""INSERT INTO master_tasks (id, profile_id, authorized_target, task_type, payload_json, status, target_node_id, timeout_seconds, max_retries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)""", (task_id, profile_id, authorized_target, task_type, json.dumps(payload), target_node_id, timeout_seconds, max_retries, now, now))
+        conn.execute("""INSERT INTO master_tasks (id, profile_id, authorized_target, task_type, payload_json, status, target_node_id, timeout_seconds, max_retries, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)""", (task_id, profile_id, authorized_target, task_type, json.dumps(payload), target_node_id, timeout_seconds, max_retries, priority, now, now))
         conn.commit()
     return get_master_task(task_id)  # type: ignore[return-value]
 
@@ -352,7 +357,7 @@ def allocate_master_task(node_id: str) -> dict[str, Any] | None:
     dispatch_id = str(uuid.uuid4())
     now = _now()
     with get_db() as conn:
-        row = conn.execute("SELECT id FROM master_tasks WHERE status = 'queued' AND (target_node_id = ? OR target_node_id IS NULL) ORDER BY created_at ASC LIMIT 1", (node_id,)).fetchone()
+        row = conn.execute("SELECT id FROM master_tasks WHERE status = 'queued' AND (target_node_id = ? OR target_node_id IS NULL) ORDER BY priority DESC, created_at ASC LIMIT 1", (node_id,)).fetchone()
         if not row:
             return None
         updated = conn.execute("UPDATE master_tasks SET status='dispatched', dispatch_id=?, target_node_id=?, updated_at=? WHERE id=? AND status='queued'", (dispatch_id, node_id, now, row["id"]))

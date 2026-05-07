@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
-from .source_adapters import NoopWriteBackSink, WriteBackSink
+from . import source_registry
+from .source_adapters import WriteBackSink
 
-_sink: WriteBackSink = NoopWriteBackSink()
+_sink: WriteBackSink | None = None
 
 
 def get_sink() -> WriteBackSink:
-    return _sink
+    if _sink is not None:
+        return _sink
+    return source_registry.get_writeback_sink(os.environ.get("MASTER_WRITEBACK_SINK"))
 
 
 def set_sink(sink: WriteBackSink) -> None:

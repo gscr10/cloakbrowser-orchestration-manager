@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime as dt
+import json
 from typing import Any, Protocol
 
 from . import biz_repository as repo
@@ -36,6 +38,7 @@ def build_master_task_payload(job: dict[str, Any]) -> dict[str, Any]:
         "biz_idempotency_key": job["idempotency_key"],
         "worker_tags": job.get("worker_tags") or [],
         "profile_name": job.get("profile_name"),
+        "priority": int(job.get("priority") or 0),
         "biz_params": job.get("params") or {},
     }
 
@@ -75,6 +78,7 @@ def schedule_biz_job(job_id: str, find_worker: WorkerSchedulerContract) -> dict[
         timeout_seconds=int(payload["timeout_seconds"]),
         max_retries=int(payload["max_retries"]),
         target_node_id=payload.get("target_node_id"),
+        priority=int(payload.get("priority") or 0),
     )
     db.create_master_task_event(task["id"], payload.get("target_node_id"), "biz_scheduled", f"biz_job_id={job['id']}")
     repo.upsert_run(job["id"], task["id"], payload.get("target_node_id"), "assigned")
@@ -166,9 +170,6 @@ def mark_task_finished(task: dict[str, Any], node_id: str, status: str, result: 
     if not biz_job_id:
         return
     if status == "success":
-        import datetime as dt
-        import json
-
         summary = json.dumps(result or {}, ensure_ascii=False) if result else "success"
         repo.update_job(
             biz_job_id,
@@ -189,3 +190,66 @@ def mark_task_finished(task: dict[str, Any], node_id: str, status: str, result: 
         _persist_artifacts(biz_job_id, run.get("id"), result or {})
         _record_writeback(biz_job_id, "final_failed", {"error_message": failure_reason, "result": result or {}}, node_id)
         repo.create_event(biz_job_id, "job_failed", failure_reason, node_id)
+
+
+def cancel_biz_job(job_id: str, reason: str | None = None) -> dict[str, Any]:
+    job = repo.get_job(job_id)
+    if not job:
+        raise KeyError("biz job not found")
+    repo.create_event(job_id, "job_cancelled", reason or "cancelled by operator", job.get("assigned_worker"))
+    return repo.update_job(job_id, status="cancelled", error_message=reason) or job
+
+
+def requeue_biz_job(job_id: str) -> dict[str, Any]:
+    job = repo.get_job(job_id)
+    if not job:
+        raise KeyError("biz job not found")
+    updates: dict[str, Any] = {
+        "status": "pending_schedule",
+        "assigned_worker": None,
+        "profile_id": None,
+        "master_task_id": None,
+        "result_summary": None,
+        "error_message": None,
+    }
+    repo.create_event(job_id, "job_requeued", "operator requested requeue", job.get("assigned_worker"))
+    return repo.update_job(job_id, **updates) or job
+
+
+def recover_stuck_master_tasks(older_than_seconds: int = 600) -> dict[str, Any]:
+    now = dt.datetime.now(dt.timezone.utc)
+    recovered: list[dict[str, Any]] = []
+    for task in db.list_master_tasks():
+        if task.get("status") not in {"dispatched", "running"}:
+            continue
+        updated_at_raw = task.get("updated_at") or task.get("created_at")
+        try:
+            updated_at = dt.datetime.fromisoformat(updated_at_raw)
+        except (TypeError, ValueError):
+            updated_at = now
+        age = (now - updated_at).total_seconds()
+        threshold = max(older_than_seconds, int(task.get("timeout_seconds") or 0))
+        if age < threshold:
+            continue
+        retry_count = int(task.get("retry_count") or 0)
+        max_retries = int(task.get("max_retries") or 0)
+        if retry_count < max_retries:
+            updated = db.update_master_task(
+                task["id"],
+                status="queued",
+                retry_count=retry_count + 1,
+                dispatch_id=None,
+                failure_reason="recovered stuck task",
+            )
+            db.create_master_task_event(task["id"], task.get("target_node_id"), "stuck_requeued", "recovered stuck task")
+        else:
+            updated = db.update_master_task(
+                task["id"],
+                status="failed",
+                failure_reason="stuck task exceeded recovery threshold",
+            )
+            db.create_master_task_event(task["id"], task.get("target_node_id"), "stuck_failed", "stuck task exceeded recovery threshold")
+            mark_task_finished(task, task.get("target_node_id") or "", "failed", result={}, failure_reason="stuck task exceeded recovery threshold")
+        if updated:
+            recovered.append(updated)
+    return {"count": len(recovered), "tasks": recovered}

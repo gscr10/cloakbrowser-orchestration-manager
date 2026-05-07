@@ -268,7 +268,8 @@ def pick_target_node() -> dict[str, Any] | None:
 def create_master_task(payload: dict[str, Any]) -> dict[str, Any]:
     target = pick_target_node()
     target_node_id = payload.get("target_node_id") or (target["node_id"] if target else None)
-    return db.create_master_task(profile_id=payload.get("profile_id"), authorized_target=payload["authorized_target"], task_type=payload["task_type"], payload=payload, timeout_seconds=int(payload.get("timeout_seconds") or 300), max_retries=int(payload.get("max_retries") or 1), target_node_id=target_node_id)
+    max_retries = 1 if payload.get("max_retries") is None else int(payload.get("max_retries") or 0)
+    return db.create_master_task(profile_id=payload.get("profile_id"), authorized_target=payload["authorized_target"], task_type=payload["task_type"], payload=payload, timeout_seconds=int(payload.get("timeout_seconds") or 300), max_retries=max_retries, target_node_id=target_node_id, priority=int(payload.get("priority") or 0))
 
 
 def _fetch_worker_profile_id(node: dict[str, Any], preferred_name: str | None = None, timeout_seconds: float = 5.0) -> str | None:

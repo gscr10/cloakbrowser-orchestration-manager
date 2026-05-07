@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 from typing import Any
 from urllib.parse import urlparse
 
@@ -30,6 +31,7 @@ def find_available_worker(
     """
     worker_tags = worker_tags or []
     required_capabilities = required_capabilities or []
+    max_running_per_script = int(os.environ.get("MASTER_MAX_RUNNING_PER_SCRIPT_PER_NODE", "0") or 0)
     capabilities = repo.list_capabilities()
     by_node = {}
     for cap in capabilities:
@@ -70,6 +72,19 @@ def find_available_worker(
             if required not in node_caps:
                 break
         else:
+            if max_running_per_script and required_capabilities:
+                script_key = required_capabilities[0].get("script_key")
+                script_running = 0
+                for task in db.list_master_tasks():
+                    payload = task.get("payload") or {}
+                    if (
+                        task.get("target_node_id") == node["node_id"]
+                        and task.get("status") in {"dispatched", "running"}
+                        and payload.get("script_key") == script_key
+                    ):
+                        script_running += 1
+                if script_running >= max_running_per_script:
+                    continue
             available_slots = max_profiles - running_profiles
             candidates.append((running_profiles, cpu, mem_ratio, node, available_slots, sorted(node_tags)))
     if not candidates:

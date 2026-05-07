@@ -5,13 +5,13 @@ from pathlib import Path
 from typing import Any
 
 from . import infra_repository as repo
-from .source_adapters import LocalJsonSource
+from . import source_registry
 
 INFRA_WORKERS_PATH = Path(os.environ.get("MASTER_INFRA_WORKERS_PATH", "/config/infra_workers.json"))
 
 
 def local_infra_workers(path: Path | None = None) -> list[dict[str, Any]]:
-    source = LocalJsonSource(infra_workers_path=path or INFRA_WORKERS_PATH, biz_tasks_path=Path("/dev/null"))
+    source = source_registry.get_infra_source("local_json", path=path or INFRA_WORKERS_PATH)
     return source.list_workers()
 
 
@@ -42,19 +42,21 @@ def normalize_worker_record(item: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def sync_infra_workers(path: Path | None = None) -> dict[str, Any]:
-    sync_run = repo.create_sync_run("local_json", "infra_workers")
+def sync_infra_workers(path: Path | None = None, source_name: str = "local_json") -> dict[str, Any]:
+    source = source_registry.get_infra_source(source_name, path=path or INFRA_WORKERS_PATH)
+    sync_run = repo.create_sync_run(source.name, "infra_workers")
     imported = []
     try:
-        for item in local_infra_workers(path):
+        for item in source.list_workers():
             normalized = normalize_worker_record(item)
             if not normalized:
                 continue
+            normalized["source"] = normalized.get("source") or source.name
             worker = repo.upsert_worker(normalized)
-            repo.create_event(worker["node_id"], "worker_imported", "worker imported from local_json", "import")
+            repo.create_event(worker["node_id"], "worker_imported", f"worker imported from {source.name}", "import")
             imported.append(worker)
     except Exception as exc:
         repo.update_sync_run(sync_run["id"], status="failed", imported_count=len(imported), error_message=str(exc))
         raise
     updated_run = repo.update_sync_run(sync_run["id"], status="success", imported_count=len(imported))
-    return {"source": "local_json", "sync_run": updated_run, "count": len(imported), "workers": imported}
+    return {"source": source.name, "sync_run": updated_run, "count": len(imported), "workers": imported}
