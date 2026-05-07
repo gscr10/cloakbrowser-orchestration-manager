@@ -11,6 +11,10 @@ from .source_adapters import LocalJsonSource
 BIZ_TASKS_PATH = Path(os.environ.get("MASTER_BIZ_TASKS_PATH", "/config/biz_tasks.json"))
 
 
+def _int_with_default(value: Any, default: int) -> int:
+    return default if value is None else int(value)
+
+
 def local_biz_tasks(path: Path | None = None) -> list[dict[str, Any]]:
     source = LocalJsonSource(infra_workers_path=Path("/dev/null"), biz_tasks_path=path or BIZ_TASKS_PATH)
     return source.list_jobs()
@@ -43,7 +47,7 @@ def normalize_biz_job(item: dict[str, Any]) -> dict[str, Any] | None:
         "profile_name": item.get("profile_name"),
         "worker_tags": item.get("worker_tags") or [],
         "priority": int(item.get("priority") or 0),
-        "max_retries": int(item.get("max_retries") or 1),
+        "max_retries": _int_with_default(item.get("max_retries"), 1),
         "params": item.get("params_json") or item.get("params") or {},
     }
     if "assigned_worker" in item:

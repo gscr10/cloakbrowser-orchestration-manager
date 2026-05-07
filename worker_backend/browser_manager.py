@@ -211,7 +211,9 @@ class BrowserManager:
                 height=profile.get("screen_height", 1080),
             )
 
-            # Build fingerprint args from profile settings
+            # Build fingerprint args from profile settings. minimal_cloak keeps the
+            # profile close to CloakBrowser's README examples and avoids explicit
+            # screen/platform overrides unless the task requested them in launch_args.
             extra_args = self._build_fingerprint_args(profile)
             extra_args += profile.get("launch_args") or []
             extra_args.append(f"--remote-debugging-port={cdp_port}")
@@ -233,10 +235,13 @@ class BrowserManager:
                         headless=bool(profile.get("headless", False)),
                         proxy=proxy,
                         args=extra_args,
+                        stealth_args=bool(profile.get("stealth_args", True)),
                         timezone=profile.get("timezone") or None,
                         locale=profile.get("locale") or None,
+                        backend=profile.get("backend") or None,
                         humanize=bool(profile.get("humanize", False)),
                         human_preset=profile.get("human_preset", "default"),
+                        human_config=profile.get("human_config") or None,
                         geoip=bool(profile.get("geoip", False)),
                         color_scheme=profile.get("color_scheme") or None,
                         user_agent=profile.get("user_agent") or None,
@@ -361,6 +366,13 @@ class BrowserManager:
 
     def _build_fingerprint_args(self, profile: dict[str, Any]) -> list[str]:
         """Build extra Chromium args from profile fingerprint settings."""
+        if profile.get("minimal_cloak"):
+            args: list[str] = []
+            seed = profile.get("fingerprint_seed")
+            if seed is not None:
+                args.append(f"--fingerprint={seed}")
+            return args
+
         args: list[str] = [
             "--disable-infobars",
             "--test-type",  # suppress "unsupported flag: --no-sandbox" bad flags warning

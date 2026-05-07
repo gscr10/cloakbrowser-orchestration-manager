@@ -337,6 +337,18 @@ await page.goto("https://example.com");
 
 如果需要在 VNC 中看到浏览器窗口，请创建或更新 Profile 为 `headless=false`。`headless=true` 的 Profile 仍可运行并暴露 CDP，但 VNC 不会显示可见浏览器窗口。
 
+### Worker 业务脚本结构
+
+Worker 端将浏览器生命周期和业务自动化拆开维护：
+
+- `worker_backend/browser_manager.py` 只负责 Profile、CloakBrowser、VNC、CDP 端口和资源限制。
+- `worker_backend/automation/runner.py` 负责为一次业务执行创建 `AutomationContext`，默认通过 Playwright CDP 连接已启动的 Profile 并新建 page。
+- `worker_backend/automation/context.py` 是业务脚本稳定依赖面，提供 `page`、`payload`、`params`、`target_url()`、`account()` 和 `artifact_path()`。
+- `worker_backend/automation/registry.py` 负责脚本注册和能力上报。新增脚本时用 `register_template(script_key, version, handler)` 挂载。
+- `worker_backend/automation/scripts/` 放具体业务脚本，例如 `nol_native_login.py`。
+
+业务脚本不直接调用 `cloakbrowser.launch()`，也不管理 Profile 生命周期；它只使用 `AutomationContext.page` 上的 Playwright API 编写业务步骤。对 NOL 这类敏感登录流程，推荐参数是 `minimal_cloak=true`、`humanize=true`、`human_preset=careful`、`use_cdp_automation=true`，并让脚本每次新建 page。
+
 ## 调度器行为
 
 调度器刻意保持轻量，并只面向单机运行：

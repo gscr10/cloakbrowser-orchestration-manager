@@ -1,21 +1,35 @@
 {
   "jobs": [
     {
-      "job_key": "itp-login-demo-001",
+      "job_key": "nol-native-login-demo-001",
       "source_record_id": "local-rec-001",
       "enabled": true,
       "status": "pending_schedule",
       "run_generation": 1,
-      "script_key": "open_url",
+      "script_key": "nol_native_login",
       "script_version": "v1",
       "account": "demo@example.com",
-      "target_url": "https://www.baidu.com/s?wd=BTS",
-      "profile_name": "demo-profile",
+      "target_url": "https://world.nol.com/en/auth-web/login?returnUrl=%2Fen%2Fmy-info",
+      "profile_name": "nol-native-login-demo",
       "worker_tags": ["kr", "ticket"],
       "priority": 10,
       "max_retries": 1,
       "params": {
-        "keyword": "BTS"
+        "password": "replace-with-real-password",
+        "fingerprint_seed": 7293841,
+        "timezone": "Asia/Shanghai",
+        "locale": "zh-CN",
+        "minimal_cloak": true,
+        "humanize": true,
+        "human_preset": "careful",
+        "use_cdp_automation": true,
+        "human_config": {
+          "mistype_chance": 0.03,
+          "typing_delay": 100,
+          "idle_between_actions": true,
+          "idle_between_duration": [0.3, 0.8]
+        },
+        "auto_turnstile_timeout": 80
       }
     }
   ]

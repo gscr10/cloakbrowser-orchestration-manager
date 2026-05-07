@@ -206,6 +206,61 @@ def test_master_local_json_biz_sync_and_schedule(master_app_client: TestClient, 
     assert task["target_node_id"] == "worker-a"
 
 
+def test_master_local_json_nol_native_login_schedule(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    workers_path = tmp_path / "infra_workers.json"
+    workers_path.write_text(
+        json.dumps({"workers": [{"node_id": "worker-a", "host": "10.0.0.10", "tags": ["kr", "ticket"]}]}),
+        encoding="utf-8",
+    )
+    jobs_path = tmp_path / "biz_tasks.json"
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "job_key": "nol-login-1",
+                        "source_record_id": "rec-nol-1",
+                        "run_generation": 1,
+                        "script_key": "nol_native_login",
+                        "script_version": "v1",
+                        "account": "demo@example.com",
+                        "target_url": "https://world.nol.com/en/auth-web/login?returnUrl=%2Fen%2Fmy-info",
+                        "worker_tags": ["kr", "ticket"],
+                        "profile_name": "nol-demo",
+                        "params": {
+                            "password": "secret",
+                            "fingerprint_seed": 7293841,
+                            "humanize": True,
+                            "human_preset": "careful",
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(infra_sync, "INFRA_WORKERS_PATH", workers_path)
+    monkeypatch.setattr(biz_sync, "BIZ_TASKS_PATH", jobs_path)
+    assert master_app_client.post("/api/master/infra/sync").status_code == 200
+    master_app_client.post(
+        "/api/master/nodes/register",
+        json={
+            "node_id": "worker-a",
+            "hostname": "worker-a.local",
+            "max_profiles": 10,
+            "capabilities": [{"script_key": "nol_native_login", "script_version": "v1"}],
+        },
+    )
+
+    sync = master_app_client.post("/api/master/biz/sync", json={"schedule": True})
+
+    assert sync.status_code == 200
+    task = master_app_client.get("/api/master/tasks").json()[0]
+    assert task["payload"]["script_key"] == "nol_native_login"
+    assert task["payload"]["account"] == "demo@example.com"
+    assert task["payload"]["biz_params"]["fingerprint_seed"] == 7293841
+
+
 def test_master_biz_resync_preserves_running_state(master_app_client: TestClient, tmp_path: Path, monkeypatch):
     workers_path = tmp_path / "infra_workers.json"
     workers_path.write_text(
@@ -366,6 +421,34 @@ def test_master_biz_sync_marks_invalid_input(master_app_client: TestClient, tmp_
     assert sync.json()["scheduled"] == []
 
 
+def test_master_biz_sync_preserves_zero_max_retries(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    jobs_path = tmp_path / "biz_tasks.json"
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "job_key": "no-retry",
+                        "source_record_id": "rec-no-retry",
+                        "run_generation": 1,
+                        "script_key": "open_url",
+                        "script_version": "v1",
+                        "target_url": "https://example.com",
+                        "max_retries": 0,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(biz_sync, "BIZ_TASKS_PATH", jobs_path)
+
+    sync = master_app_client.post("/api/master/biz/sync", json={"schedule": False})
+
+    assert sync.status_code == 200
+    assert sync.json()["jobs"][0]["max_retries"] == 0
+
+
 def test_master_lists_biz_input_schemas(master_app_client: TestClient):
     resp = master_app_client.get("/api/master/biz/input-schemas")
     assert resp.status_code == 200
@@ -374,6 +457,12 @@ def test_master_lists_biz_input_schemas(master_app_client: TestClient):
         "script_version": "v1",
         "input_schema_version": "v1",
         "required_fields": ["target_url"],
+    } in resp.json()
+    assert {
+        "script_key": "nol_native_login",
+        "script_version": "v1",
+        "input_schema_version": "v1",
+        "required_fields": ["target_url", "account", "password"],
     } in resp.json()
 
 
@@ -644,6 +733,8 @@ def test_master_retry_uses_infra_scheduling_contract(master_app_client: TestClie
     assert data["status"] == "queued"
     assert data["retry_count"] == 1
     assert data["target_node_id"] == "worker-a"
+    assert data["profile_id"] is None
+    assert "profile_id" not in data["payload"]
 
 
 def test_master_success_report_persists_artifacts_and_writeback_event(master_app_client: TestClient):
@@ -821,6 +912,35 @@ def test_master_open_url_auto_creates_profile_when_worker_has_none(master_app_cl
     assert pulled_task["id"] == task["id"]
     assert pulled_task["profile_id"] == "auto-created-open-url-p1"
     assert pulled_task["payload"]["profile_id"] == "auto-created-open-url-p1"
+
+
+def test_master_profile_create_options_use_biz_params():
+    payload = {
+        "biz_params": {
+            "fingerprint_seed": 7293841,
+            "timezone": "Asia/Shanghai",
+            "locale": "zh-CN",
+            "backend": "patchright",
+            "minimal_cloak": True,
+            "humanize": True,
+            "human_preset": "careful",
+            "human_config": {"typing_delay": 100},
+            "profile_options": {"platform": "macos", "screen_width": 1440},
+        }
+    }
+
+    assert master_control._profile_create_options(payload) == {
+        "fingerprint_seed": 7293841,
+        "timezone": "Asia/Shanghai",
+        "locale": "zh-CN",
+        "backend": "patchright",
+        "minimal_cloak": True,
+        "humanize": True,
+        "human_preset": "careful",
+        "human_config": {"typing_delay": 100},
+        "platform": "macos",
+        "screen_width": 1440,
+    }
 
 
 def test_master_cluster_marks_stale_nodes(master_app_client: TestClient, monkeypatch):

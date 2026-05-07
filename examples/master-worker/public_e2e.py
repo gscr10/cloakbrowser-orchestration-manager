@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from typing import Any
@@ -41,6 +42,14 @@ def _poll_task(master_url: str, task_id: str, timeout_seconds: int) -> dict[str,
     raise RuntimeError(f"task {task_id} did not finish within {timeout_seconds}s")
 
 
+def _redact_secret(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: ("***" if key.lower() in {"password", "secret", "token"} else _redact_secret(item)) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_secret(item) for item in value]
+    return value
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     master_url = args.master_url.rstrip("/")
     worker_url = args.worker_url.rstrip("/") if args.worker_url else None
@@ -54,7 +63,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     _require(isinstance(cluster.get("nodes"), list), "master cluster endpoint is not healthy")
     _require(any(node.get("status") == "online" for node in cluster["nodes"]), "no online worker registered in master")
     _require(isinstance(workers, list), "infra workers endpoint is not healthy")
-    _require(any(item.get("script_key") == "open_url" for item in schemas), "open_url input schema is missing")
+    _require(any(item.get("script_key") == args.script_key for item in schemas), f"{args.script_key} input schema is missing")
 
     worker_templates = None
     worker_profiles = None
@@ -63,22 +72,58 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if isinstance(worker_templates, dict):
             worker_templates = worker_templates.get("templates") or []
         worker_profiles = _json("GET", worker_url, "/api/profiles")
-        _require(any(item.get("script_key") == "open_url" for item in worker_templates), "worker open_url template is missing")
+        _require(any(item.get("script_key") == args.script_key for item in worker_templates), f"worker {args.script_key} template is missing")
         _require(isinstance(worker_profiles, list), "worker profiles endpoint is not healthy")
 
     task = None
     if not args.skip_task:
-        created = _json(
-            "POST",
-            master_url,
-            "/api/master/tasks",
-            {
+        if args.script_key == "nol_native_login":
+            _require(bool(args.account), "nol_native_login requires --account or NOL_EMAIL")
+            _require(bool(args.password), "nol_native_login requires --password or NOL_PASSWORD")
+        biz_params: dict[str, Any] = {
+            "account": args.account,
+            "password": args.password,
+            "fingerprint_seed": args.fingerprint_seed,
+            "timezone": args.timezone,
+            "locale": args.locale,
+            "minimal_cloak": args.minimal_cloak,
+            "humanize": True,
+            "human_preset": "careful",
+            "use_cdp_automation": True,
+            "human_config": {
+                "mistype_chance": 0.03,
+                "typing_delay": 100,
+                "idle_between_actions": True,
+                "idle_between_duration": [0.3, 0.8],
+            },
+            "auto_turnstile_timeout": args.turnstile_timeout,
+            "require_login": args.require_login,
+        }
+        if args.backend:
+            biz_params["backend"] = args.backend
+        payload = {
+            "authorized_target": args.authorized_target,
+            "task_type": "automation_script" if args.script_key else "open_url",
+            "url": args.url,
+            "script_key": args.script_key,
+            "script_version": args.script_version,
+            "biz_params": biz_params,
+            "timeout_seconds": args.task_timeout,
+            "max_retries": 0,
+        }
+        if args.script_key == "open_url":
+            payload = {
                 "authorized_target": args.authorized_target,
                 "task_type": "open_url",
                 "url": args.url,
                 "timeout_seconds": args.task_timeout,
                 "max_retries": 0,
-            },
+            }
+        created = _json(
+            "POST",
+            master_url,
+            "/api/master/tasks",
+            payload,
             timeout=15,
         )
         task = _poll_task(master_url, created["id"], args.task_timeout)
@@ -91,7 +136,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "infra_workers": len(workers),
         "worker_templates": worker_templates,
         "worker_profiles": len(worker_profiles or []),
-        "task": task,
+        "task": _redact_secret(task),
     }
 
 
@@ -99,9 +144,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Public Master/Worker smoke E2E test")
     parser.add_argument("--master-url", required=True)
     parser.add_argument("--worker-url")
-    parser.add_argument("--url", default="https://www.baidu.com/s?wd=BTS")
-    parser.add_argument("--authorized-target", default="public e2e open_url")
-    parser.add_argument("--task-timeout", type=int, default=180)
+    parser.add_argument("--url", default="https://world.nol.com/en/auth-web/login?returnUrl=%2Fen%2Fmy-info")
+    parser.add_argument("--authorized-target", default="public e2e nol_native_login")
+    parser.add_argument("--script-key", default="nol_native_login")
+    parser.add_argument("--script-version", default="v1")
+    parser.add_argument("--account", default=os.environ.get("NOL_EMAIL", ""))
+    parser.add_argument("--password", default=os.environ.get("NOL_PASSWORD", ""))
+    parser.add_argument("--fingerprint-seed", type=int, default=int(os.environ.get("FINGERPRINT_SEED", "7293841")))
+    parser.add_argument("--timezone", default=os.environ.get("NOL_TIMEZONE", "Asia/Shanghai"))
+    parser.add_argument("--locale", default=os.environ.get("NOL_LOCALE", "zh-CN"))
+    parser.add_argument("--backend", default=os.environ.get("CLOAK_BACKEND"))
+    parser.add_argument("--minimal-cloak", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--turnstile-timeout", type=int, default=int(os.environ.get("AUTO_TURNSTILE_TIMEOUT", "80")))
+    parser.add_argument("--require-login", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--task-timeout", type=int, default=240)
     parser.add_argument("--skip-task", action="store_true")
     args = parser.parse_args()
     try:

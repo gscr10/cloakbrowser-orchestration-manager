@@ -4,6 +4,7 @@ from typing import Any
 
 
 _REQUIRED_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("nol_native_login", "v1"): ("target_url", "account", "password"),
     ("open_url", "v1"): ("target_url",),
     ("itp_login_ticket", "v1"): ("target_url", "account"),
 }

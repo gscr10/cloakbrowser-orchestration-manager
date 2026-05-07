@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from . import automation_runtime
+from .automation import list_templates
 from .browser_manager import BrowserManager
 
 _MEMINFO_PATH = Path("/proc/meminfo")
@@ -46,7 +46,7 @@ async def register_node(client: httpx.AsyncClient, cfg: dict[str, Any]) -> None:
             "hostname": cfg["hostname"],
             "api_base": cfg.get("api_base"),
             "max_profiles": cfg["max_profiles"],
-            "capabilities": automation_runtime.list_templates(),
+            "capabilities": list_templates(),
         },
     )
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import automation_runtime
+from .automation import run_template
 from .browser_manager import RunningProfile
 
 
@@ -22,6 +22,6 @@ async def execute_task(running: RunningProfile, task: dict[str, Any]) -> dict[st
         payload.setdefault("url", task.get("url"))
         payload.setdefault("authorized_target", task.get("authorized_target"))
         payload.setdefault("timeout_seconds", task.get("timeout_seconds"))
-        return await automation_runtime.run_template(running, payload)
+        return await run_template(running, payload)
 
     return None

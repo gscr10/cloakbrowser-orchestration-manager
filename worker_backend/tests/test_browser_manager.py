@@ -135,6 +135,19 @@ def test_build_args_screen():
     assert "--fingerprint-screen-height=1440" in args
 
 
+def test_build_args_minimal_cloak_only_uses_seed():
+    args = _mgr._build_fingerprint_args(
+        {
+            "minimal_cloak": True,
+            "fingerprint_seed": 7293841,
+            "platform": "windows",
+            "screen_width": 1920,
+            "screen_height": 1080,
+        }
+    )
+    assert args == ["--fingerprint=7293841"]
+
+
 def test_build_args_empty_profile():
     args = _mgr._build_fingerprint_args({})
     # Only the 3 base args
