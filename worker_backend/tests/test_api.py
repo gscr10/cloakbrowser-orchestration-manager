@@ -270,6 +270,42 @@ def test_create_cancel_and_list_task(app_client: TestClient):
     assert listed.json()[0]["id"] == task["id"]
 
 
+def test_cancel_running_task_stops_profile(app_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    profile = app_client.post("/api/profiles", json={"name": "Running Task"}).json()
+    task = app_client.post("/api/tasks", json={
+        "profile_id": profile["id"],
+        "authorized_target": "internal test app",
+        "task_type": "external_cdp",
+    }).json()
+    stop = AsyncMock()
+    monkeypatch.setattr(main.browser_mgr, "stop", stop)
+    from worker_backend import database as db
+    run = db.create_profile_run(profile_id=profile["id"], task_id=task["id"], proxy_id=None, status="running")
+    db.update_task(task["id"], status="running", run_id=run["id"])
+
+    cancel = app_client.post(f"/api/tasks/{task['id']}/cancel")
+
+    assert cancel.status_code == 200
+    assert cancel.json()["status"] == "cancelled"
+    stop.assert_awaited_once_with(profile["id"])
+
+
+def test_cancel_distributed_task_by_master_id(app_client: TestClient):
+    profile = app_client.post("/api/profiles", json={"name": "Distributed Task"}).json()
+    task = app_client.post("/api/tasks", json={
+        "profile_id": profile["id"],
+        "authorized_target": "internal test app",
+        "task_type": "external_cdp",
+        "payload": {"master_task_id": "master-123"},
+    }).json()
+
+    cancel = app_client.post("/api/distributed/tasks/master-123/cancel")
+
+    assert cancel.status_code == 200
+    assert cancel.json()["id"] == task["id"]
+    assert cancel.json()["status"] == "cancelled"
+
+
 def test_create_open_url_task_defaults_url(app_client: TestClient):
     profile = app_client.post("/api/profiles", json={"name": "Queued"}).json()
     resp = app_client.post("/api/tasks", json={

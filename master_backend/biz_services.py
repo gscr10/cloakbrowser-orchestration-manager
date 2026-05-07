@@ -190,6 +190,12 @@ def mark_task_finished(task: dict[str, Any], node_id: str, status: str, result: 
         _persist_artifacts(biz_job_id, run.get("id"), result or {})
         _record_writeback(biz_job_id, "final_failed", {"error_message": failure_reason, "result": result or {}}, node_id)
         repo.create_event(biz_job_id, "job_failed", failure_reason, node_id)
+        return
+    if status == "cancelled":
+        repo.update_job(biz_job_id, status="cancelled", error_message=failure_reason)
+        repo.upsert_run(biz_job_id, task["id"], node_id, "cancelled", result=result or {}, error_message=failure_reason)
+        _record_writeback(biz_job_id, "cancelled", {"error_message": failure_reason, "result": result or {}}, node_id)
+        repo.create_event(biz_job_id, "job_cancelled", failure_reason, node_id)
 
 
 def cancel_biz_job(job_id: str, reason: str | None = None) -> dict[str, Any]:

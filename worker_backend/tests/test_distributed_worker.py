@@ -44,11 +44,41 @@ async def test_process_one_task_reports_success(monkeypatch):
 
     processed = await distributed_worker.process_one_task(client, cfg, browser_mgr)
     assert processed is True
-    assert submitted["payload"] == pull_response.json.return_value["task"]["payload"]
+    assert submitted["payload"]["master_task_id"] == "t1"
     tick.assert_awaited_once_with(browser_mgr, task_id="local-1")
     calls = client.post.await_args_list
     assert calls[1].args[0] == "/api/master/tasks/t1/report"
     assert calls[2].kwargs["json"]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_process_one_task_reports_cancelled(monkeypatch):
+    cfg = {"node_id": "worker-a"}
+    browser_mgr = MagicMock()
+    browser_mgr.running = {}
+    pull_response = MagicMock()
+    pull_response.raise_for_status = MagicMock()
+    pull_response.json.return_value = {
+        "task": {
+            "id": "t-cancel",
+            "dispatch_id": "d-cancel",
+            "payload": {"profile_id": "p1", "authorized_target": "internal", "task_type": "external_cdp"},
+        }
+    }
+    client = AsyncMock()
+    client.post = AsyncMock(return_value=pull_response)
+    monkeypatch.setattr(distributed_worker.scheduler, "submit_task", lambda payload: {"id": "local-cancel"})
+    monkeypatch.setattr(distributed_worker.scheduler, "tick", AsyncMock())
+    monkeypatch.setattr(
+        distributed_worker.db,
+        "get_task",
+        lambda task_id: {"id": task_id, "status": "cancelled", "failure_reason": "cancelled by master", "payload": {}},
+    )
+
+    processed = await distributed_worker.process_one_task(client, cfg, browser_mgr)
+
+    assert processed is True
+    assert client.post.await_args_list[-1].kwargs["json"]["status"] == "cancelled"
 
 
 @pytest.mark.asyncio

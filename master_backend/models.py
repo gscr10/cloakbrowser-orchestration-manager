@@ -69,7 +69,7 @@ class MasterTaskPullRequest(BaseModel):
 class MasterTaskReportRequest(BaseModel):
     node_id: str
     dispatch_id: str | None = None
-    status: Literal["started", "success", "failed"]
+    status: Literal["started", "success", "failed", "cancelled"]
     failure_reason: str | None = None
     result: dict[str, object] = Field(default_factory=dict)
 
