@@ -82,20 +82,25 @@ async def _verify_login(page: Any, account: str) -> bool:
     return (on_account_page or has_account_content) and not still_on_login
 
 
-async def nol_native_login_v1(ctx: AutomationContext) -> dict[str, Any]:
-    account = ctx.account()
-    password = str(ctx.params.get("password") or ctx.payload.get("password") or "").strip()
-    if not account or not password:
-        raise ValueError("nol_native_login_v1 requires account/email and password")
+async def _close_page(page: Any) -> None:
+    try:
+        await page.close()
+    except Exception:
+        pass
 
-    timeout_ms = max(60000, ctx.timeout_seconds * 1000)
-    turnstile_timeout = int(ctx.params.get("auto_turnstile_timeout") or 80)
-    require_login = bool(ctx.params.get("require_login", True))
-    page = ctx.page
+
+async def _attempt_login(
+    page: Any,
+    target_url: str,
+    account: str,
+    password: str,
+    timeout_ms: int,
+    turnstile_timeout: int,
+) -> tuple[bool, bool, Any]:
     page.set_default_timeout(30000)
     page.set_default_navigation_timeout(timeout_ms)
 
-    await page.goto(ctx.target_url(NOL_LOGIN_URL), wait_until="domcontentloaded", timeout=timeout_ms)
+    await page.goto(target_url, wait_until="domcontentloaded", timeout=timeout_ms)
     webdriver = await _safe_eval(page, "() => navigator.webdriver", "unknown")
 
     email_input = page.locator('input[name="email"]')
@@ -123,6 +128,42 @@ async def nol_native_login_v1(ctx: AutomationContext) -> dict[str, Any]:
         await asyncio.sleep(2)
 
     login_ok = await _verify_login(page, account)
+    return turnstile_ok, login_ok, webdriver
+
+
+async def nol_native_login_v1(ctx: AutomationContext) -> dict[str, Any]:
+    account = ctx.account()
+    password = str(ctx.params.get("password") or ctx.payload.get("password") or "").strip()
+    if not account or not password:
+        raise ValueError("nol_native_login_v1 requires account/email and password")
+
+    timeout_ms = max(60000, ctx.timeout_seconds * 1000)
+    turnstile_timeout = int(ctx.params.get("auto_turnstile_timeout") or 80)
+    page_attempts = max(1, int(ctx.params.get("turnstile_page_attempts") or 2))
+    require_login = bool(ctx.params.get("require_login", True))
+    page = ctx.page
+    target_url = ctx.target_url(NOL_LOGIN_URL)
+
+    turnstile_ok = False
+    login_ok = False
+    webdriver: Any = "unknown"
+    attempt = 0
+    for attempt in range(1, page_attempts + 1):
+        if attempt > 1:
+            await _close_page(page)
+            page = await ctx.new_page()
+        turnstile_ok, login_ok, webdriver = await _attempt_login(
+            page,
+            target_url,
+            account,
+            password,
+            timeout_ms,
+            turnstile_timeout,
+        )
+        if turnstile_ok or login_ok:
+            break
+
+    login_ok = await _verify_login(page, account)
     screenshot_path = ctx.artifact_path("nol-native-login")
     await page.screenshot(path=str(screenshot_path), full_page=True)
     result = {
@@ -132,6 +173,7 @@ async def nol_native_login_v1(ctx: AutomationContext) -> dict[str, Any]:
         "turnstile": turnstile_ok,
         "login": login_ok,
         "webdriver": webdriver,
+        "attempts": attempt,
         "artifacts": [{"type": "screenshot", "uri": str(screenshot_path)}],
     }
     if require_login and not (turnstile_ok and login_ok):

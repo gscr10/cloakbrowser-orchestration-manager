@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from worker_backend.browser_manager import RunningProfile
 
@@ -23,6 +23,7 @@ class AutomationContext:
     payload: dict[str, Any]
     params: dict[str, Any]
     page: Any
+    page_factory: Callable[[], Awaitable[Any]] | None = None
     artifact_dir: Path = ARTIFACT_DIR
 
     @property
@@ -42,3 +43,8 @@ class AutomationContext:
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
         safe_prefix = prefix.strip().replace("/", "-") or "artifact"
         return self.artifact_dir / f"{safe_prefix}-{self.running.profile_id}-{int(time.time())}{suffix}"
+
+    async def new_page(self) -> Any:
+        if self.page_factory:
+            return await self.page_factory()
+        return await self.running.context.new_page()

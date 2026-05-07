@@ -97,6 +97,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "idle_between_duration": [0.3, 0.8],
             },
             "auto_turnstile_timeout": args.turnstile_timeout,
+            "turnstile_page_attempts": args.turnstile_page_attempts,
             "require_login": args.require_login,
         }
         if args.backend:
@@ -156,6 +157,7 @@ def main() -> int:
     parser.add_argument("--backend", default=os.environ.get("CLOAK_BACKEND"))
     parser.add_argument("--minimal-cloak", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--turnstile-timeout", type=int, default=int(os.environ.get("AUTO_TURNSTILE_TIMEOUT", "80")))
+    parser.add_argument("--turnstile-page-attempts", type=int, default=int(os.environ.get("TURNSTILE_PAGE_ATTEMPTS", "2")))
     parser.add_argument("--require-login", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--task-timeout", type=int, default=240)
     parser.add_argument("--skip-task", action="store_true")

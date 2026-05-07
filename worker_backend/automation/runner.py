@@ -16,9 +16,10 @@ async def _new_page_session(
     running: RunningProfile,
     payload: dict[str, Any],
     params: dict[str, Any],
-) -> tuple[Any, Callable[[], Awaitable[None]]]:
+) -> tuple[Any, Callable[[], Awaitable[Any]], Callable[[], Awaitable[None]]]:
     if not bool(params.get("use_cdp_automation", True)):
-        return await running.context.new_page(), _noop
+        page = await running.context.new_page()
+        return page, running.context.new_page, _noop
 
     from playwright.async_api import async_playwright
 
@@ -30,7 +31,8 @@ async def _new_page_session(
             cdp_url = f"{cdp_url}?fingerprint={seed}"
         browser = await pw.chromium.connect_over_cdp(cdp_url)
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
-        return await context.new_page(), pw.stop
+        page = await context.new_page()
+        return page, context.new_page, pw.stop
     except Exception:
         await pw.stop()
         raise
@@ -42,8 +44,14 @@ async def automation_context(
     payload: dict[str, Any],
 ) -> AsyncIterator[AutomationContext]:
     params = payload.get("biz_params") if isinstance(payload.get("biz_params"), dict) else {}
-    page, cleanup = await _new_page_session(running, payload, params)
+    page, page_factory, cleanup = await _new_page_session(running, payload, params)
     try:
-        yield AutomationContext(running=running, payload=payload, params=params, page=page)
+        yield AutomationContext(
+            running=running,
+            payload=payload,
+            params=params,
+            page=page,
+            page_factory=page_factory,
+        )
     finally:
         await cleanup()
