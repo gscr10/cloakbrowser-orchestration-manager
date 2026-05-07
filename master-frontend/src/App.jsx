@@ -884,15 +884,16 @@ function BizPage({ bizJobs, bizRuns, bizArtifacts, selectedBizJob, setSelectedBi
         <div className="panel">
           <div className="panel-title"><h3>Artifacts / 回写</h3></div>
           <table>
-            <thead><tr><th>类型</th><th>URI</th><th>Job</th><th>Run</th></tr></thead>
+            <thead><tr><th>类型</th><th>URI</th><th>Job</th><th>Run</th><th>操作</th></tr></thead>
             <tbody>
-              {bizArtifacts.length === 0 && <EmptyRow colSpan={4} message="暂无 artifacts，MVP 当前以结构化 result 为主" />}
+              {bizArtifacts.length === 0 && <EmptyRow colSpan={5} message="暂无 artifacts，MVP 当前以结构化 result 为主" />}
               {bizArtifacts.map((artifact) => (
                 <tr key={artifact.id}>
                   <td>{artifact.artifact_type}</td>
                   <td>{artifact.uri}</td>
                   <td>{shortId(artifact.biz_job_id)}</td>
                   <td>{shortId(artifact.run_id)}</td>
+                  <td><a href={`/api/master/biz/artifacts/${artifact.id}/download`} target="_blank" rel="noreferrer">打开</a></td>
                 </tr>
               ))}
             </tbody>

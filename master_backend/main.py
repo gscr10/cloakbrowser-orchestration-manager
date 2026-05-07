@@ -5,12 +5,15 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import architecture
@@ -25,6 +28,7 @@ from . import infra_repository
 from . import infra_services
 from . import infra_sync
 from . import master_control
+from . import redaction
 from . import source_registry
 from .models import (
     MasterInfraReconcileRequest,
@@ -52,6 +56,50 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="CloakBrowser Master API", lifespan=lifespan)
+
+ARTIFACT_ROOT = Path(os.environ.get("MASTER_ARTIFACT_ROOT", "/data/artifacts"))
+
+
+def _safe_local_artifact_path(uri: str) -> Path | None:
+    parsed = urlparse(uri)
+    raw_path = parsed.path if parsed.scheme == "file" else uri if not parsed.scheme else ""
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = ARTIFACT_ROOT / path
+    try:
+        resolved = path.resolve()
+        root = ARTIFACT_ROOT.resolve()
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    return resolved if resolved.is_file() else None
+
+
+async def _artifact_response(artifact: dict[str, object]) -> Response:
+    uri = str(artifact.get("uri") or "")
+    local_path = _safe_local_artifact_path(uri)
+    if local_path:
+        return FileResponse(local_path)
+
+    run_id = artifact.get("run_id")
+    run = db.get_biz_job_run(str(run_id)) if run_id else None
+    node = db.get_master_node(str(run.get("node_id"))) if run and run.get("node_id") else None
+    api_base = (node or {}).get("api_base")
+    filename = Path(urlparse(uri).path or uri).name
+    if not api_base or not filename:
+        raise HTTPException(status_code=404, detail="Artifact file is not available through Master")
+    try:
+        async with httpx.AsyncClient(base_url=str(api_base).rstrip("/"), timeout=20.0) as client:
+            resp = await client.get(f"/api/artifacts/{filename}")
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=exc.response.status_code, detail="Worker artifact is not available")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to proxy worker artifact: {exc}")
+    media_type = resp.headers.get("content-type") or "application/octet-stream"
+    return Response(content=resp.content, media_type=media_type)
 
 MASTER_FRONTEND_DIR = Path(__file__).parent.parent / "master-frontend" / "dist"
 if MASTER_FRONTEND_DIR.exists():
@@ -157,7 +205,7 @@ async def master_cluster_status():
 
 @app.get("/api/master/tasks")
 async def master_list_tasks():
-    return db.list_master_tasks()
+    return redaction.redact(db.list_master_tasks())
 
 
 @app.get("/api/master/tasks/{task_id}")
@@ -165,7 +213,7 @@ async def master_get_task(task_id: str):
     task = db.get_master_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return task
+    return redaction.redact(task)
 
 
 @app.get("/api/master/tasks/{task_id}/events")
@@ -183,7 +231,7 @@ async def master_create_task(req: MasterTaskCreateRequest):
         payload["url"] = "https://www.baidu.com"
     task = master_control.create_master_task(payload)
     db.create_master_task_event(task["id"], None, "queued", "created by master")
-    return task
+    return redaction.redact(task)
 
 
 @app.post("/api/master/tasks/pull")
@@ -250,7 +298,7 @@ async def master_report_task(task_id: str, req: MasterTaskReportRequest):
             updated = db.update_master_task(task_id, **retry_fields)
             db.create_master_task_event(task_id, req.node_id, "retry_scheduled", req.failure_reason)
             biz_services.mark_task_retrying(task, req.node_id, req.failure_reason)
-            return updated
+            return redaction.redact(updated)
     update_fields = {"status": mapped, "failure_reason": req.failure_reason}
     if req.result:
         next_payload = dict(payload)
@@ -260,7 +308,7 @@ async def master_report_task(task_id: str, req: MasterTaskReportRequest):
     db.create_master_task_event(task_id, req.node_id, req.status, req.failure_reason)
     if req.status in {"success", "failed"}:
         biz_services.mark_task_finished(task, req.node_id, req.status, result=dict(req.result), failure_reason=req.failure_reason)
-    return updated
+    return redaction.redact(updated)
 
 
 @app.get("/api/master/providers")
@@ -354,7 +402,7 @@ async def master_sync_biz_jobs(req: MasterSyncRequest):
                 if job.get("enabled") and not job.get("master_task_id") and job.get("status") != "invalid":
                     scheduled.append(biz_services.schedule_biz_job(job["id"], infra_services.find_available_worker))
             result["scheduled"] = scheduled
-        return result
+        return redaction.redact(result)
     except NotImplementedError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except ValueError as exc:
@@ -363,13 +411,13 @@ async def master_sync_biz_jobs(req: MasterSyncRequest):
 
 @app.get("/api/master/biz/jobs")
 async def master_list_biz_jobs():
-    return biz_repository.list_jobs()
+    return redaction.redact(biz_repository.list_jobs())
 
 
 @app.post("/api/master/biz/jobs/{job_id}/schedule")
 async def master_schedule_biz_job(job_id: str):
     try:
-        return biz_services.schedule_biz_job(job_id, infra_services.find_available_worker)
+        return redaction.redact(biz_services.schedule_biz_job(job_id, infra_services.find_available_worker))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
@@ -385,7 +433,7 @@ async def master_cancel_biz_job(job_id: str):
             if task and task.get("status") in {"queued", "dispatched", "running"}:
                 db.update_master_task(task["id"], status="cancelled", failure_reason="cancelled by operator")
                 db.create_master_task_event(task["id"], task.get("target_node_id"), "cancelled", "cancelled by operator")
-        return job
+        return redaction.redact(job)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -393,14 +441,14 @@ async def master_cancel_biz_job(job_id: str):
 @app.post("/api/master/biz/jobs/{job_id}/requeue")
 async def master_requeue_biz_job(job_id: str):
     try:
-        return biz_services.requeue_biz_job(job_id)
+        return redaction.redact(biz_services.requeue_biz_job(job_id))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.post("/api/master/tasks/recover-stuck")
 async def master_recover_stuck_tasks(req: MasterStuckTaskRecoveryRequest):
-    return biz_services.recover_stuck_master_tasks(req.older_than_seconds)
+    return redaction.redact(biz_services.recover_stuck_master_tasks(req.older_than_seconds))
 
 
 @app.post("/api/master/tasks/{task_id}/cancel")
@@ -413,7 +461,7 @@ async def master_cancel_task(task_id: str):
     payload = task.get("payload") or {}
     if payload.get("biz_job_id"):
         biz_services.cancel_biz_job(payload["biz_job_id"], "cancelled by operator")
-    return updated
+    return redaction.redact(updated)
 
 
 @app.post("/api/master/tasks/{task_id}/requeue")
@@ -423,7 +471,7 @@ async def master_requeue_task(task_id: str):
         raise HTTPException(status_code=404, detail="Task not found")
     updated = db.update_master_task(task_id, status="queued", dispatch_id=None, failure_reason=None)
     db.create_master_task_event(task_id, task.get("target_node_id"), "requeued", "requeued by operator")
-    return updated
+    return redaction.redact(updated)
 
 
 @app.get("/api/master/biz/events")
@@ -433,12 +481,20 @@ async def master_list_biz_events():
 
 @app.get("/api/master/biz/runs")
 async def master_list_biz_runs():
-    return biz_repository.list_runs()
+    return redaction.redact(biz_repository.list_runs())
 
 
 @app.get("/api/master/biz/artifacts")
 async def master_list_biz_artifacts():
     return biz_repository.list_artifacts()
+
+
+@app.get("/api/master/biz/artifacts/{artifact_id}/download")
+async def master_download_biz_artifact(artifact_id: str):
+    artifact = biz_repository.get_artifact(artifact_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return await _artifact_response(artifact)
 
 
 @app.post("/api/master/provision/run")
