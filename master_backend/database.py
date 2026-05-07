@@ -455,6 +455,10 @@ def _json_dict(value: str | None) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _int_with_default(value: Any, default: int) -> int:
+    return default if value is None else int(value)
+
+
 def upsert_infra_worker(payload: dict[str, Any]) -> dict[str, Any]:
     now = _now()
     node_id = str(payload["node_id"])
@@ -701,7 +705,7 @@ def upsert_biz_job(payload: dict[str, Any]) -> dict[str, Any]:
         "profile_name": payload.get("profile_name"),
         "worker_tags": json.dumps(payload.get("worker_tags") or []),
         "priority": int(payload.get("priority") or 0),
-        "max_retries": int(payload.get("max_retries") or 1),
+        "max_retries": _int_with_default(payload.get("max_retries"), 1),
         "params_json": json.dumps(params),
         "input_snapshot_json": json.dumps(snapshot),
         "assigned_worker": payload.get("assigned_worker"),

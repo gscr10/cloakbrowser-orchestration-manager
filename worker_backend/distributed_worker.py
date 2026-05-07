@@ -36,6 +36,7 @@ async def process_one_task(client: httpx.AsyncClient, cfg: dict[str, Any], brows
         json={"node_id": cfg["node_id"], "status": "started", "dispatch_id": dispatch_id},
     )
 
+    local_task: dict[str, Any] | None = None
     try:
         profile_id = payload.get("profile_id")
         if not profile_id:
@@ -54,6 +55,9 @@ async def process_one_task(client: httpx.AsyncClient, cfg: dict[str, Any], brows
         latest = db.get_task(local_task["id"])
         if not latest or latest.get("status") in {"queued", "failed"}:
             reason = latest.get("failure_reason") if latest else "local task missing"
+            result = {}
+            if latest and isinstance(latest.get("payload"), dict):
+                result = latest["payload"].get("result") or {}
             await client.post(
                 f"/api/master/tasks/{task_id}/report",
                 json={
@@ -61,6 +65,7 @@ async def process_one_task(client: httpx.AsyncClient, cfg: dict[str, Any], brows
                     "status": "failed",
                     "dispatch_id": dispatch_id,
                     "failure_reason": reason or "local task failed",
+                    "result": result,
                 },
             )
         else:
@@ -72,6 +77,11 @@ async def process_one_task(client: httpx.AsyncClient, cfg: dict[str, Any], brows
                 json={"node_id": cfg["node_id"], "status": "success", "dispatch_id": dispatch_id, "result": result},
             )
     except Exception as exc:
+        result = {}
+        if local_task:
+            latest = db.get_task(local_task["id"])
+            if latest and isinstance(latest.get("payload"), dict):
+                result = latest["payload"].get("result") or {}
         await client.post(
             f"/api/master/tasks/{task_id}/report",
             json={
@@ -79,6 +89,7 @@ async def process_one_task(client: httpx.AsyncClient, cfg: dict[str, Any], brows
                 "status": "failed",
                 "dispatch_id": dispatch_id,
                 "failure_reason": str(exc),
+                "result": result,
             },
         )
     return True

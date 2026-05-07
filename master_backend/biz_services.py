@@ -17,6 +17,10 @@ class WorkerSchedulerContract(Protocol):
         ...
 
 
+def _int_with_default(value: Any, default: int) -> int:
+    return default if value is None else int(value)
+
+
 def build_master_task_payload(job: dict[str, Any]) -> dict[str, Any]:
     return {
         "profile_id": job.get("profile_id"),
@@ -24,9 +28,10 @@ def build_master_task_payload(job: dict[str, Any]) -> dict[str, Any]:
         "task_type": "automation_script",
         "url": job.get("target_url"),
         "timeout_seconds": 300,
-        "max_retries": int(job.get("max_retries") or 1),
+        "max_retries": _int_with_default(job.get("max_retries"), 1),
         "script_key": job["script_key"],
         "script_version": job["script_version"],
+        "account": job.get("account"),
         "biz_job_id": job["id"],
         "biz_idempotency_key": job["idempotency_key"],
         "worker_tags": job.get("worker_tags") or [],
@@ -180,6 +185,7 @@ def mark_task_finished(task: dict[str, Any], node_id: str, status: str, result: 
         return
     if status == "failed":
         repo.update_job(biz_job_id, status="final_failed", error_message=failure_reason)
-        repo.upsert_run(biz_job_id, task["id"], node_id, "final_failed", error_message=failure_reason)
-        _record_writeback(biz_job_id, "final_failed", {"error_message": failure_reason}, node_id)
+        run = repo.upsert_run(biz_job_id, task["id"], node_id, "final_failed", result=result or {}, error_message=failure_reason)
+        _persist_artifacts(biz_job_id, run.get("id"), result or {})
+        _record_writeback(biz_job_id, "final_failed", {"error_message": failure_reason, "result": result or {}}, node_id)
         repo.create_event(biz_job_id, "job_failed", failure_reason, node_id)

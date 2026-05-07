@@ -229,14 +229,19 @@ async def master_report_task(task_id: str, req: MasterTaskReportRequest):
                 )
             else:
                 target = master_control.pick_target_node()
-            updated = db.update_master_task(
-                task_id,
-                status="queued",
-                retry_count=retry_count + 1,
-                dispatch_id=None,
-                failure_reason=req.failure_reason,
-                target_node_id=target["node_id"] if target else task.get("target_node_id"),
-            )
+            retry_fields: dict[str, object | None] = {
+                "status": "queued",
+                "retry_count": retry_count + 1,
+                "dispatch_id": None,
+                "failure_reason": req.failure_reason,
+                "target_node_id": target["node_id"] if target else task.get("target_node_id"),
+            }
+            if payload.get("profile_id"):
+                next_payload = dict(payload)
+                next_payload.pop("profile_id", None)
+                retry_fields["profile_id"] = None
+                retry_fields["payload_json"] = json.dumps(next_payload)
+            updated = db.update_master_task(task_id, **retry_fields)
             db.create_master_task_event(task_id, req.node_id, "retry_scheduled", req.failure_reason)
             biz_services.mark_task_retrying(task, req.node_id, req.failure_reason)
             return updated

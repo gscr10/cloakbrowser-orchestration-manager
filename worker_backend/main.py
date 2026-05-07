@@ -20,9 +20,9 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import automation_runtime
 from . import config_importer
 from . import database as db
+from .automation import list_templates
 from . import distributed_worker
 from . import scheduler
 from .browser_manager import BrowserManager
@@ -599,7 +599,7 @@ async def get_scheduler_status():
 
 @app.get("/api/automation/templates")
 async def list_automation_templates():
-    return {"templates": automation_runtime.list_templates()}
+    return {"templates": list_templates()}
 
 
 @app.post("/api/scheduler/tick", response_model=SchedulerStatusResponse)

@@ -107,3 +107,4 @@ async def test_register_node_reports_automation_capabilities():
     payload = client.post.await_args.kwargs["json"]
     assert {"script_key": "open_url", "script_version": "v1", "input_schema_version": "v1"} in payload["capabilities"]
     assert {"script_key": "itp_login_ticket", "script_version": "v1", "input_schema_version": "v1"} in payload["capabilities"]
+    assert {"script_key": "nol_native_login", "script_version": "v1", "input_schema_version": "v1"} in payload["capabilities"]

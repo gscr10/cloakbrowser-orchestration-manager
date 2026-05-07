@@ -49,8 +49,12 @@ def init_db():
                 hardware_concurrency INTEGER,
                 humanize BOOLEAN DEFAULT 0,
                 human_preset TEXT DEFAULT 'default',
+                human_config TEXT DEFAULT '{}',
                 headless BOOLEAN DEFAULT 0,
                 geoip BOOLEAN DEFAULT 0,
+                backend TEXT,
+                stealth_args BOOLEAN DEFAULT 1,
+                minimal_cloak BOOLEAN DEFAULT 0,
                 clipboard_sync BOOLEAN DEFAULT 1,
                 color_scheme TEXT,
                 notes TEXT,
@@ -120,6 +124,18 @@ def init_db():
         if "launch_args" not in cols:
             conn.execute("ALTER TABLE profiles ADD COLUMN launch_args TEXT DEFAULT '[]'")
             conn.commit()
+        if "human_config" not in cols:
+            conn.execute("ALTER TABLE profiles ADD COLUMN human_config TEXT DEFAULT '{}'")
+            conn.commit()
+        if "backend" not in cols:
+            conn.execute("ALTER TABLE profiles ADD COLUMN backend TEXT")
+            conn.commit()
+        if "stealth_args" not in cols:
+            conn.execute("ALTER TABLE profiles ADD COLUMN stealth_args BOOLEAN DEFAULT 1")
+            conn.commit()
+        if "minimal_cloak" not in cols:
+            conn.execute("ALTER TABLE profiles ADD COLUMN minimal_cloak BOOLEAN DEFAULT 0")
+            conn.commit()
         task_cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
         if "payload_json" not in task_cols:
             conn.execute("ALTER TABLE tasks ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}'")
@@ -146,10 +162,10 @@ def create_profile(
             """INSERT INTO profiles (
                 id, name, fingerprint_seed, proxy, timezone, locale, platform,
                 user_agent, screen_width, screen_height, gpu_vendor, gpu_renderer,
-                hardware_concurrency, humanize, human_preset, headless, geoip,
-                clipboard_sync, color_scheme, launch_args, notes,
-                user_data_dir, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                hardware_concurrency, humanize, human_preset, human_config, headless,
+                geoip, backend, stealth_args, minimal_cloak, clipboard_sync, color_scheme,
+                launch_args, notes, user_data_dir, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 profile_id, name, seed,
                 fields.get("proxy"),
@@ -164,8 +180,12 @@ def create_profile(
                 fields.get("hardware_concurrency"),
                 fields.get("humanize", False),
                 fields.get("human_preset", "default"),
+                json.dumps(fields.get("human_config") or {}),
                 fields.get("headless", False),
                 fields.get("geoip", False),
+                fields.get("backend"),
+                fields.get("stealth_args", True),
+                fields.get("minimal_cloak", False),
                 fields.get("clipboard_sync", True),
                 fields.get("color_scheme"),
                 json.dumps(fields.get("launch_args") or []),
@@ -190,6 +210,7 @@ def get_profile(profile_id: str) -> dict[str, Any] | None:
             return None
         profile = dict(row)
         profile["launch_args"] = json.loads(profile.get("launch_args") or "[]")
+        profile["human_config"] = json.loads(profile.get("human_config") or "{}")
         tags = conn.execute(
             "SELECT tag, color FROM profile_tags WHERE profile_id = ?",
             (profile_id,),
@@ -205,6 +226,7 @@ def list_profiles() -> list[dict[str, Any]]:
         for row in rows:
             profile = dict(row)
             profile["launch_args"] = json.loads(profile.get("launch_args") or "[]")
+            profile["human_config"] = json.loads(profile.get("human_config") or "{}")
             tags = conn.execute(
                 "SELECT tag, color FROM profile_tags WHERE profile_id = ?",
                 (profile["id"],),
@@ -227,12 +249,15 @@ def update_profile(profile_id: str, **fields: Any) -> dict[str, Any] | None:
     # Pre-serialize launch_args to JSON before the generic update loop
     if "launch_args" in fields:
         fields["launch_args"] = json.dumps(fields["launch_args"] or [])
+    if "human_config" in fields:
+        fields["human_config"] = json.dumps(fields["human_config"] or {})
 
     for col in (
         "name", "fingerprint_seed", "proxy", "timezone", "locale", "platform",
         "user_agent", "screen_width", "screen_height", "gpu_vendor", "gpu_renderer",
-        "hardware_concurrency", "humanize", "human_preset", "headless", "geoip",
-        "clipboard_sync", "color_scheme", "launch_args", "notes",
+        "hardware_concurrency", "humanize", "human_preset", "human_config", "headless",
+        "geoip", "backend", "stealth_args", "minimal_cloak", "clipboard_sync",
+        "color_scheme", "launch_args", "notes",
     ):
         if col in fields:
             update_cols.append(f"{col} = ?")

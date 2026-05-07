@@ -82,7 +82,11 @@ async def tick(browser_mgr: BrowserManager, task_id: str | None = None) -> dict[
             db.update_task(task["id"], status="success", payload=payload)
         db.update_profile_run(run["id"], status="running")
     except Exception as exc:
-        db.update_task(task["id"], status="failed", failure_reason=str(exc))
+        payload = dict(task.get("payload") or {})
+        result = getattr(exc, "result", None)
+        if isinstance(result, dict) and result:
+            payload["result"] = result
+        db.update_task(task["id"], status="failed", failure_reason=str(exc), payload=payload)
         db.update_profile_run(run["id"], status="failed", stopped_at=db._now(), failure_reason=str(exc))
         raise
 

@@ -302,13 +302,62 @@ def _fetch_worker_profile_id(node: dict[str, Any], preferred_name: str | None = 
     return None
 
 
-def _create_worker_profile(node: dict[str, Any], profile_name: str | None = None, timeout_seconds: float = 8.0) -> str | None:
+def _profile_create_options(payload: dict[str, Any]) -> dict[str, Any]:
+    params = payload.get("biz_params") if isinstance(payload.get("biz_params"), dict) else {}
+    options = params.get("profile_options") if isinstance(params.get("profile_options"), dict) else {}
+    allowed_fields = {
+        "fingerprint_seed",
+        "proxy",
+        "timezone",
+        "locale",
+        "platform",
+        "screen_width",
+        "screen_height",
+        "humanize",
+        "human_preset",
+        "human_config",
+        "headless",
+        "geoip",
+        "backend",
+        "stealth_args",
+        "minimal_cloak",
+        "color_scheme",
+        "launch_args",
+        "notes",
+    }
+    out = {key: value for key, value in options.items() if key in allowed_fields}
+    for key in (
+        "fingerprint_seed",
+        "proxy",
+        "timezone",
+        "locale",
+        "platform",
+        "humanize",
+        "human_preset",
+        "human_config",
+        "headless",
+        "backend",
+        "stealth_args",
+        "minimal_cloak",
+    ):
+        if key in params and key not in out:
+            out[key] = params[key]
+    return out
+
+
+def _create_worker_profile(
+    node: dict[str, Any],
+    profile_name: str | None = None,
+    profile_options: dict[str, Any] | None = None,
+    timeout_seconds: float = 8.0,
+) -> str | None:
     api_base = (node.get("api_base") or "").strip().rstrip("/")
     if not api_base:
         return None
     node_id = (node.get("node_id") or "worker").strip() or "worker"
     name = (profile_name or "").strip() or f"auto-{node_id}-{uuid.uuid4().hex[:8]}"
     payload = {"name": name, "platform": "windows"}
+    payload.update(profile_options or {})
     try:
         with httpx.Client(base_url=api_base, timeout=timeout_seconds) as client:
             resp = client.post("/api/profiles", json=payload)
@@ -329,7 +378,7 @@ def ensure_task_profile_for_node(task: dict[str, Any], node: dict[str, Any]) -> 
     preferred_name = (payload.get("profile_name") or "").strip() or None
     profile_id = _fetch_worker_profile_id(node, preferred_name=preferred_name)
     if not profile_id:
-        profile_id = _create_worker_profile(node, profile_name=preferred_name)
+        profile_id = _create_worker_profile(node, profile_name=preferred_name, profile_options=_profile_create_options(payload))
     if not profile_id:
         return task
     payload["profile_id"] = profile_id
