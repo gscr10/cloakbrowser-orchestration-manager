@@ -481,6 +481,45 @@ def test_master_biz_sync_preserves_zero_max_retries(master_app_client: TestClien
     assert sync.json()["jobs"][0]["max_retries"] == 0
 
 
+def test_master_biz_sync_skips_disabled_jobs(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    jobs_path = tmp_path / "biz_tasks.json"
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "job_key": "disabled-history",
+                        "source_record_id": "rec-disabled-history",
+                        "enabled": False,
+                        "run_generation": 1,
+                        "script_key": "open_url",
+                        "script_version": "v1",
+                        "target_url": "https://example.com",
+                    },
+                    {
+                        "job_key": "enabled-current",
+                        "source_record_id": "rec-enabled-current",
+                        "enabled": True,
+                        "run_generation": 1,
+                        "script_key": "open_url",
+                        "script_version": "v1",
+                        "target_url": "https://example.com",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(biz_sync, "BIZ_TASKS_PATH", jobs_path)
+
+    sync = master_app_client.post("/api/master/biz/sync", json={"schedule": False})
+
+    assert sync.status_code == 200
+    assert sync.json()["count"] == 1
+    assert sync.json()["jobs"][0]["job_key"] == "enabled-current"
+    assert [job["job_key"] for job in master_app_client.get("/api/master/biz/jobs").json()] == ["enabled-current"]
+
+
 def test_master_lists_biz_input_schemas(master_app_client: TestClient):
     resp = master_app_client.get("/api/master/biz/input-schemas")
     assert resp.status_code == 200
@@ -1124,6 +1163,38 @@ def test_feishu_writeback_uses_snapshot_record_id(monkeypatch):
 
     assert result["written"] is True
     assert calls[0][0] == "rec-1"
+    assert calls[0][1]["error_message"] is None
+
+
+def test_feishu_writeback_clears_stale_result_on_failure(monkeypatch):
+    from master_backend import source_registry
+
+    calls = []
+
+    class FakeClient:
+        def validate(self):
+            return {"ready": True}
+
+        def update_biz_record(self, record_id, fields):
+            calls.append((record_id, fields))
+            return {"code": 0, "msg": "success"}
+
+    monkeypatch.setattr(source_registry, "FeishuBitableClient", lambda: FakeClient())
+    sink = source_registry.FeishuOpenApiWriteBackSink()
+
+    result = sink.write_biz_status(
+        {
+            "id": "job-1",
+            "source_record_id": "rec-1",
+            "input_snapshot": {"feishu_record_id": "rec-1"},
+        },
+        "final_failed",
+        {"error_message": "failed"},
+    )
+
+    assert result["written"] is True
+    assert calls[0][1]["error_message"] == "failed"
+    assert calls[0][1]["result_summary"] is None
 
 
 def test_feishu_biz_sync_preserves_record_id_for_writeback():

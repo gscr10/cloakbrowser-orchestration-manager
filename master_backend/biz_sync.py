@@ -70,6 +70,8 @@ def sync_biz_jobs(path: Path | None = None, source_name: str = "local_json") -> 
         normalized = normalize_biz_job(item)
         if not normalized:
             continue
+        if not normalized.get("enabled", True):
+            continue
         normalized["source"] = normalized.get("source") or source.name
         job = repo.upsert_job(normalized)
         repo.create_event(job["id"], "job_imported", f"business job imported from {source.name}")
