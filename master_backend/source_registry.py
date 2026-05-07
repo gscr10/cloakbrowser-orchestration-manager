@@ -194,6 +194,9 @@ def _writeback_fields(job: dict[str, Any], status: str, payload: dict[str, Any])
     }
     if status == "success":
         fields[mapping["result_summary"]] = payload.get("result_summary")
+        fields[mapping["error_message"]] = None
     else:
         fields[mapping["error_message"]] = payload.get("error_message")
-    return {key: value for key, value in fields.items() if value is not None}
+        fields[mapping["result_summary"]] = None
+    nullable_fields = {mapping["error_message"], mapping["result_summary"]}
+    return {key: value for key, value in fields.items() if value is not None or key in nullable_fields}

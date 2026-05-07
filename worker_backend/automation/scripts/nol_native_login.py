@@ -89,6 +89,21 @@ async def _close_page(page: Any) -> None:
         pass
 
 
+async def _safe_title(page: Any) -> str:
+    try:
+        return await page.title()
+    except Exception:
+        return ""
+
+
+async def _safe_screenshot(page: Any, path: Any) -> tuple[list[dict[str, str]], str | None]:
+    try:
+        await page.screenshot(path=str(path), full_page=True)
+    except Exception as exc:
+        return [], str(exc)
+    return [{"type": "screenshot", "uri": str(path)}], None
+
+
 async def _attempt_login(
     page: Any,
     target_url: str,
@@ -165,17 +180,19 @@ async def nol_native_login_v1(ctx: AutomationContext) -> dict[str, Any]:
 
     login_ok = await _verify_login(page, account)
     screenshot_path = ctx.artifact_path("nol-native-login")
-    await page.screenshot(path=str(screenshot_path), full_page=True)
+    artifacts, screenshot_error = await _safe_screenshot(page, screenshot_path)
     result = {
         "url": page.url,
-        "title": await page.title(),
+        "title": await _safe_title(page),
         "account": account,
         "turnstile": turnstile_ok,
         "login": login_ok,
         "webdriver": webdriver,
         "attempts": attempt,
-        "artifacts": [{"type": "screenshot", "uri": str(screenshot_path)}],
+        "artifacts": artifacts,
     }
+    if screenshot_error:
+        result["screenshot_error"] = screenshot_error
     if require_login and not (turnstile_ok and login_ok):
         raise AutomationScriptError(
             f"nol native login failed: turnstile={turnstile_ok}, login={login_ok}, url={page.url}",
