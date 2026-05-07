@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from . import source_registry
@@ -12,7 +11,7 @@ _sink: WriteBackSink | None = None
 def get_sink() -> WriteBackSink:
     if _sink is not None:
         return _sink
-    return source_registry.get_writeback_sink(os.environ.get("MASTER_WRITEBACK_SINK"))
+    return source_registry.get_writeback_sink()
 
 
 def set_sink(sink: WriteBackSink) -> None:

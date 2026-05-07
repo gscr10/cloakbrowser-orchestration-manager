@@ -72,6 +72,14 @@ def cmd_task_events(client: MasterClient, args: argparse.Namespace) -> Any:
     return client.request("GET", f"/api/master/tasks/{args.task_id}/events")
 
 
+def cmd_cancel_task(client: MasterClient, args: argparse.Namespace) -> Any:
+    return client.request("POST", f"/api/master/tasks/{args.task_id}/cancel")
+
+
+def cmd_requeue_task(client: MasterClient, args: argparse.Namespace) -> Any:
+    return client.request("POST", f"/api/master/tasks/{args.task_id}/requeue")
+
+
 def cmd_create_task(client: MasterClient, args: argparse.Namespace) -> Any:
     payload = {
         "profile_id": args.profile_id,
@@ -90,9 +98,23 @@ def cmd_providers(client: MasterClient, _args: argparse.Namespace) -> Any:
 
 
 def cmd_set_provider(client: MasterClient, args: argparse.Namespace) -> Any:
-    if args.provider == "feishu_openapi":
-        raise ApiError("feishu_openapi provider is not configured yet")
     return client.request("PUT", "/api/master/providers/active", {"provider": args.provider})
+
+
+def cmd_sources(client: MasterClient, _args: argparse.Namespace) -> Any:
+    return client.request("GET", "/api/master/sources")
+
+
+def cmd_validate_feishu(client: MasterClient, _args: argparse.Namespace) -> Any:
+    return client.request("POST", "/api/master/providers/feishu-openapi/validate")
+
+
+def cmd_smoke_feishu(client: MasterClient, _args: argparse.Namespace) -> Any:
+    return client.request("POST", "/api/master/providers/feishu-openapi/smoke")
+
+
+def cmd_set_writeback_sink(client: MasterClient, args: argparse.Namespace) -> Any:
+    return client.request("PUT", "/api/master/writeback/active", {"sink": args.sink})
 
 
 def cmd_provision_run(client: MasterClient, args: argparse.Namespace) -> Any:
@@ -134,6 +156,14 @@ def build_parser() -> argparse.ArgumentParser:
     task_events.add_argument("task_id")
     task_events.set_defaults(func=cmd_task_events)
 
+    cancel_task = subparsers.add_parser("cancel-task")
+    cancel_task.add_argument("task_id")
+    cancel_task.set_defaults(func=cmd_cancel_task)
+
+    requeue_task = subparsers.add_parser("requeue-task")
+    requeue_task.add_argument("task_id")
+    requeue_task.set_defaults(func=cmd_requeue_task)
+
     create_task = subparsers.add_parser("create-task")
     create_task.add_argument("--profile-id")
     create_task.add_argument("--authorized-target", required=True)
@@ -150,6 +180,19 @@ def build_parser() -> argparse.ArgumentParser:
     set_provider = subparsers.add_parser("set-provider")
     set_provider.add_argument("provider", choices=["static", "local_json", "feishu_openapi"])
     set_provider.set_defaults(func=cmd_set_provider)
+
+    sources = subparsers.add_parser("sources")
+    sources.set_defaults(func=cmd_sources)
+
+    validate_feishu = subparsers.add_parser("validate-feishu")
+    validate_feishu.set_defaults(func=cmd_validate_feishu)
+
+    smoke_feishu = subparsers.add_parser("smoke-feishu")
+    smoke_feishu.set_defaults(func=cmd_smoke_feishu)
+
+    writeback = subparsers.add_parser("set-writeback-sink")
+    writeback.add_argument("sink", choices=["noop", "feishu_openapi"])
+    writeback.set_defaults(func=cmd_set_writeback_sink)
 
     provision_run = subparsers.add_parser("provision-run")
     provision_run.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=True)

@@ -78,6 +78,10 @@ class MasterProviderUpdateRequest(BaseModel):
     provider: str
 
 
+class MasterWritebackSinkUpdateRequest(BaseModel):
+    sink: str
+
+
 class MasterProvisionRunRequest(BaseModel):
     dry_run: bool = True
     node_id: str | None = None

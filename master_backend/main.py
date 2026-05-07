@@ -42,6 +42,7 @@ from .models import (
     MasterTaskCreateRequest,
     MasterTaskPullRequest,
     MasterTaskReportRequest,
+    MasterWritebackSinkUpdateRequest,
 )
 
 logger = logging.getLogger("cloakbrowser.master")
@@ -339,7 +340,13 @@ async def master_report_task(task_id: str, req: MasterTaskReportRequest):
 async def master_list_providers():
     active = master_control.get_active_provider_name()
     providers = list(master_control.available_providers().keys())
-    return {"active": active, "providers": providers, "sources": source_registry.list_sources(), "sinks": source_registry.list_sinks()}
+    return {
+        "active": active,
+        "providers": providers,
+        "sources": source_registry.list_sources(),
+        "sinks": source_registry.list_sinks(),
+        "active_sink": source_registry.get_active_writeback_sink_name(),
+    }
 
 
 @app.put("/api/master/providers/active")
@@ -378,7 +385,20 @@ async def master_smoke_feishu_openapi_provider():
 
 @app.get("/api/master/sources")
 async def master_list_sources():
-    return {"sources": source_registry.list_sources(), "sinks": source_registry.list_sinks()}
+    return {
+        "sources": source_registry.list_sources(),
+        "sinks": source_registry.list_sinks(),
+        "active_sink": source_registry.get_active_writeback_sink_name(),
+    }
+
+
+@app.put("/api/master/writeback/active")
+async def master_set_writeback_sink(req: MasterWritebackSinkUpdateRequest):
+    try:
+        active = source_registry.set_active_writeback_sink_name(req.sink)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {"active_sink": active, "sinks": source_registry.list_sinks()}
 
 
 @app.get("/api/master/architecture/summary")

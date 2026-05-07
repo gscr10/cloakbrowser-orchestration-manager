@@ -1079,6 +1079,60 @@ def test_master_sources_expose_feishu_contract(master_app_client: TestClient, mo
     assert "FEISHU_APP_ID" in feishu_source["config"]["missing_env"]
     assert feishu_source["config"]["contract"]["idempotency"] == "source_record_id + run_generation"
     assert feishu_sink["ready"] is False
+    assert data["active_sink"] == "noop"
+
+
+def test_master_writeback_sink_can_be_selected(master_app_client: TestClient, monkeypatch):
+    monkeypatch.delenv("FEISHU_APP_ID", raising=False)
+
+    rejected = master_app_client.put("/api/master/writeback/active", json={"sink": "feishu_openapi"})
+    assert rejected.status_code == 422
+
+    selected = master_app_client.put("/api/master/writeback/active", json={"sink": "noop"})
+    assert selected.status_code == 200
+    assert selected.json()["active_sink"] == "noop"
+
+    sources = master_app_client.get("/api/master/sources")
+    assert sources.json()["active_sink"] == "noop"
+
+
+def test_feishu_provider_can_drive_dry_run_provision(master_app_client: TestClient, monkeypatch):
+    from master_backend import feishu_contract
+
+    for key in feishu_contract.REQUIRED_ENV:
+        monkeypatch.setenv(key, f"{key.lower()}-test")
+
+    class FakeFeishuSource:
+        name = "feishu_openapi"
+
+        def list_workers(self):
+            return [
+                {
+                    "node_id": "worker-feishu",
+                    "host": "10.0.0.30",
+                    "ssh_user": "root",
+                    "ssh_port": 22,
+                    "enabled": True,
+                    "max_profiles": 6,
+                    "tags": ["feishu"],
+                }
+            ]
+
+    monkeypatch.setattr(master_control.source_registry, "get_infra_source", lambda name: FakeFeishuSource())
+
+    set_provider = master_app_client.put("/api/master/providers/active", json={"provider": "feishu_openapi"})
+    assert set_provider.status_code == 200
+    assert set_provider.json()["active"] == "feishu_openapi"
+
+    servers = master_app_client.get("/api/master/provision/servers")
+    assert servers.status_code == 200
+    assert servers.json()["provider"] == "feishu_openapi"
+    assert servers.json()["servers"][0]["node_id"] == "worker-feishu"
+
+    provision = master_app_client.post("/api/master/provision/run", json={"dry_run": True})
+    assert provision.status_code == 200
+    assert provision.json()["job"]["provider"] == "feishu_openapi"
+    assert provision.json()["items"][0]["node_id"] == "worker-feishu"
 
 
 def test_feishu_smoke_reports_missing_config(master_app_client: TestClient, monkeypatch):

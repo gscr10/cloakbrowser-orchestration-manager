@@ -17,7 +17,9 @@ from typing import Any
 import httpx
 
 from . import database as db
+from . import feishu_contract
 from . import infra_repository
+from . import source_registry
 
 ACTIVE_PROVIDER_KEY = "master.active_provider"
 DEFAULT_PROVIDER = "static"
@@ -141,7 +143,27 @@ class FeishuOpenApiProvider(ServerProvider):
     name = "feishu_openapi"
 
     def get_servers(self) -> list[ServerRecord]:
-        raise NotImplementedError("feishu_openapi provider is not configured yet")
+        out = []
+        source = source_registry.get_infra_source("feishu_openapi")
+        for item in source.list_workers():
+            from . import infra_sync
+
+            normalized = infra_sync.normalize_worker_record(item)
+            if not normalized:
+                continue
+            out.append(
+                ServerRecord(
+                    node_id=normalized["node_id"],
+                    host=normalized["host"],
+                    username=normalized["ssh_user"],
+                    port=normalized["ssh_port"],
+                    password=normalized.get("ssh_password"),
+                    max_profiles=normalized["max_profiles"],
+                    tags=normalized.get("tags") or [],
+                    enabled=bool(normalized.get("enabled", True)),
+                )
+            )
+        return out
 
 
 def available_providers() -> dict[str, ServerProvider]:
@@ -156,7 +178,9 @@ def set_active_provider_name(name: str) -> str:
     if name not in available_providers():
         raise ValueError("provider not supported")
     if name == "feishu_openapi":
-        raise ValueError("feishu_openapi provider is not configured yet")
+        validation = feishu_contract.validate_config()
+        if not validation["ready"]:
+            raise ValueError(validation["message"])
     db.set_master_setting(ACTIVE_PROVIDER_KEY, name)
     return name
 
