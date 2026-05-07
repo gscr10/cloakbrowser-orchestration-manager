@@ -21,11 +21,9 @@ class ApiError(RuntimeError):
 
 
 class ManagerClient:
-    def __init__(self, base_url: str, token: str | None = None, timeout: float = 30.0) -> None:
-        headers = {"Authorization": f"Bearer {token}"} if token else None
+    def __init__(self, base_url: str, timeout: float = 30.0) -> None:
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
-            headers=headers,
             timeout=timeout,
         )
 
@@ -219,7 +217,6 @@ def cmd_config_import(client: ManagerClient, _args: argparse.Namespace) -> Any:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cloak-manager", description="CLI for the CloakBrowser Manager API")
     parser.add_argument("--base-url", default=os.environ.get("CLOAK_MANAGER_URL", DEFAULT_BASE_URL))
-    parser.add_argument("--token", default=os.environ.get("CLOAK_MANAGER_TOKEN") or os.environ.get("AUTH_TOKEN"))
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--compact", action="store_true", help="Print compact JSON")
     subparsers = parser.add_subparsers(dest="resource", required=True)
@@ -376,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if compact_output:
         args.compact = True
-    client = ManagerClient(args.base_url, token=args.token, timeout=args.timeout)
+    client = ManagerClient(args.base_url, timeout=args.timeout)
     try:
         result = args.func(client, args)
     except (ApiError, json.JSONDecodeError, OSError, argparse.ArgumentTypeError) as exc:

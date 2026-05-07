@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -22,8 +22,12 @@ class ProfileCreate(BaseModel):
     hardware_concurrency: int | None = None
     humanize: bool = False
     human_preset: Literal["default", "careful"] = "default"
+    human_config: dict[str, Any] | None = None
     headless: bool = False
     geoip: bool = False
+    backend: str | None = None
+    stealth_args: bool = True
+    minimal_cloak: bool = False
     clipboard_sync: bool = True
     color_scheme: Literal["light", "dark", "no-preference"] | None = None
     launch_args: list[str] = Field(default_factory=list)
@@ -46,8 +50,12 @@ class ProfileUpdate(BaseModel):
     hardware_concurrency: int | None = Field(default=None)
     humanize: bool | None = None
     human_preset: Literal["default", "careful"] | None = None
+    human_config: dict[str, Any] | None = None
     headless: bool | None = None
     geoip: bool | None = None
+    backend: str | None = Field(default=None)
+    stealth_args: bool | None = None
+    minimal_cloak: bool | None = None
     clipboard_sync: bool | None = None
     color_scheme: Literal["light", "dark", "no-preference"] | None = Field(default=None)
     launch_args: list[str] | None = None
@@ -81,8 +89,12 @@ class ProfileResponse(BaseModel):
     hardware_concurrency: int | None = None
     humanize: bool = False
     human_preset: str = "default"
+    human_config: dict[str, Any] | None = None
     headless: bool = False
     geoip: bool = False
+    backend: str | None = None
+    stealth_args: bool = True
+    minimal_cloak: bool = False
     clipboard_sync: bool = True
 
     @field_validator("clipboard_sync", mode="before")
@@ -127,10 +139,6 @@ class ClipboardRequest(BaseModel):
     text: str = Field(max_length=1_048_576)  # 1MB max
 
 
-class LoginRequest(BaseModel):
-    token: str
-
-
 class ProxyEndpointCreate(BaseModel):
     name: str | None = None
     protocol: Literal["http", "https", "socks5"] = "http"
@@ -173,8 +181,9 @@ class ProxyImportResponse(BaseModel):
 class TaskCreate(BaseModel):
     profile_id: str
     authorized_target: str
-    task_type: Literal["open_url", "external_cdp"] = "open_url"
+    task_type: Literal["open_url", "external_cdp", "automation_script"] = "open_url"
     url: str | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
     timeout_seconds: int = Field(default=300, ge=1, le=86400)
 
     @field_validator("authorized_target")
@@ -204,6 +213,7 @@ class TaskResponse(BaseModel):
     proxy_id: str | None = None
     run_id: str | None = None
     failure_reason: str | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
     created_at: str
     updated_at: str
 

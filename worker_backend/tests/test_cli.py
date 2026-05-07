@@ -42,20 +42,19 @@ def setup_fake_http(monkeypatch):
     monkeypatch.setattr(cli.httpx, "Client", FakeHttpClient)
 
 
-def test_cli_passes_base_url_and_token(monkeypatch, capsys):
+def test_cli_passes_base_url(monkeypatch, capsys):
     setup_fake_http(monkeypatch)
     FakeHttpClient.next_response = FakeResponse(data={"running_count": 0})
 
     code = cli.main([
         "--base-url", "http://manager.test",
-        "--token", "secret",
         "status",
     ])
 
     assert code == 0
     client = FakeHttpClient.instances[0]
     assert client.kwargs["base_url"] == "http://manager.test"
-    assert client.kwargs["headers"] == {"Authorization": "Bearer secret"}
+    assert "headers" not in client.kwargs
     assert client.requests == [("GET", "/api/status", None)]
     assert json.loads(capsys.readouterr().out) == {"running_count": 0}
 
@@ -116,14 +115,13 @@ def test_cli_returns_nonzero_on_api_error(monkeypatch, capsys):
 def test_cli_uses_environment_defaults(monkeypatch):
     setup_fake_http(monkeypatch)
     monkeypatch.setenv("CLOAK_MANAGER_URL", "http://env-manager.test")
-    monkeypatch.setenv("CLOAK_MANAGER_TOKEN", "env-secret")
 
     code = cli.main(["tasks", "list"])
 
     assert code == 0
     client = FakeHttpClient.instances[0]
     assert client.kwargs["base_url"] == "http://env-manager.test"
-    assert client.kwargs["headers"] == {"Authorization": "Bearer env-secret"}
+    assert "headers" not in client.kwargs
     assert client.requests == [("GET", "/api/tasks", None)]
 
 

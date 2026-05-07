@@ -19,9 +19,8 @@ class ApiError(RuntimeError):
 
 
 class MasterClient:
-    def __init__(self, base_url: str, token: str | None = None, timeout: float = 30.0) -> None:
-        headers = {"Authorization": f"Bearer {token}"} if token else None
-        self._client = httpx.Client(base_url=base_url.rstrip("/"), headers=headers, timeout=timeout)
+    def __init__(self, base_url: str, timeout: float = 30.0) -> None:
+        self._client = httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout)
 
     def close(self) -> None:
         self._client.close()
@@ -73,6 +72,14 @@ def cmd_task_events(client: MasterClient, args: argparse.Namespace) -> Any:
     return client.request("GET", f"/api/master/tasks/{args.task_id}/events")
 
 
+def cmd_cancel_task(client: MasterClient, args: argparse.Namespace) -> Any:
+    return client.request("POST", f"/api/master/tasks/{args.task_id}/cancel")
+
+
+def cmd_requeue_task(client: MasterClient, args: argparse.Namespace) -> Any:
+    return client.request("POST", f"/api/master/tasks/{args.task_id}/requeue")
+
+
 def cmd_create_task(client: MasterClient, args: argparse.Namespace) -> Any:
     payload = {
         "profile_id": args.profile_id,
@@ -91,13 +98,30 @@ def cmd_providers(client: MasterClient, _args: argparse.Namespace) -> Any:
 
 
 def cmd_set_provider(client: MasterClient, args: argparse.Namespace) -> Any:
-    if args.provider == "feishu_cli":
-        raise ApiError("feishu_cli provider is reserved and not implemented yet")
     return client.request("PUT", "/api/master/providers/active", {"provider": args.provider})
 
 
+def cmd_sources(client: MasterClient, _args: argparse.Namespace) -> Any:
+    return client.request("GET", "/api/master/sources")
+
+
+def cmd_validate_feishu(client: MasterClient, _args: argparse.Namespace) -> Any:
+    return client.request("POST", "/api/master/providers/feishu-openapi/validate")
+
+
+def cmd_smoke_feishu(client: MasterClient, _args: argparse.Namespace) -> Any:
+    return client.request("POST", "/api/master/providers/feishu-openapi/smoke")
+
+
+def cmd_set_writeback_sink(client: MasterClient, args: argparse.Namespace) -> Any:
+    return client.request("PUT", "/api/master/writeback/active", {"sink": args.sink})
+
+
 def cmd_provision_run(client: MasterClient, args: argparse.Namespace) -> Any:
-    return client.request("POST", "/api/master/provision/run", {"dry_run": args.dry_run})
+    payload = {"dry_run": args.dry_run}
+    if args.node_id:
+        payload["node_id"] = args.node_id
+    return client.request("POST", "/api/master/provision/run", payload)
 
 
 def cmd_provision_jobs(client: MasterClient, _args: argparse.Namespace) -> Any:
@@ -111,7 +135,6 @@ def cmd_provision_job(client: MasterClient, args: argparse.Namespace) -> Any:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cloak-master", description="CLI for independent master backend")
     parser.add_argument("--base-url", default=os.environ.get("CLOAK_MASTER_URL", DEFAULT_BASE_URL))
-    parser.add_argument("--token", default=os.environ.get("CLOAK_MASTER_TOKEN") or os.environ.get("AUTH_TOKEN"))
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--compact", action="store_true")
     subparsers = parser.add_subparsers(dest="action", required=True)
@@ -133,6 +156,14 @@ def build_parser() -> argparse.ArgumentParser:
     task_events.add_argument("task_id")
     task_events.set_defaults(func=cmd_task_events)
 
+    cancel_task = subparsers.add_parser("cancel-task")
+    cancel_task.add_argument("task_id")
+    cancel_task.set_defaults(func=cmd_cancel_task)
+
+    requeue_task = subparsers.add_parser("requeue-task")
+    requeue_task.add_argument("task_id")
+    requeue_task.set_defaults(func=cmd_requeue_task)
+
     create_task = subparsers.add_parser("create-task")
     create_task.add_argument("--profile-id")
     create_task.add_argument("--authorized-target", required=True)
@@ -147,11 +178,25 @@ def build_parser() -> argparse.ArgumentParser:
     providers.set_defaults(func=cmd_providers)
 
     set_provider = subparsers.add_parser("set-provider")
-    set_provider.add_argument("provider", choices=["static", "feishu_cli"])
+    set_provider.add_argument("provider", choices=["static", "local_json", "feishu_openapi"])
     set_provider.set_defaults(func=cmd_set_provider)
+
+    sources = subparsers.add_parser("sources")
+    sources.set_defaults(func=cmd_sources)
+
+    validate_feishu = subparsers.add_parser("validate-feishu")
+    validate_feishu.set_defaults(func=cmd_validate_feishu)
+
+    smoke_feishu = subparsers.add_parser("smoke-feishu")
+    smoke_feishu.set_defaults(func=cmd_smoke_feishu)
+
+    writeback = subparsers.add_parser("set-writeback-sink")
+    writeback.add_argument("sink", choices=["noop", "feishu_openapi"])
+    writeback.set_defaults(func=cmd_set_writeback_sink)
 
     provision_run = subparsers.add_parser("provision-run")
     provision_run.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=True)
+    provision_run.add_argument("--node-id")
     provision_run.set_defaults(func=cmd_provision_run)
 
     provision_jobs = subparsers.add_parser("provision-jobs")
@@ -174,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
     if compact_output:
         args.compact = True
 
-    client = MasterClient(args.base_url, token=args.token, timeout=args.timeout)
+    client = MasterClient(args.base_url, timeout=args.timeout)
     try:
         result = args.func(client, args)
     except (ApiError, json.JSONDecodeError, OSError, argparse.ArgumentTypeError) as exc:

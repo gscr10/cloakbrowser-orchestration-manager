@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,9 @@ from typing import Any
 import httpx
 
 from . import database as db
+from . import feishu_contract
+from . import infra_repository
+from . import source_registry
 
 ACTIVE_PROVIDER_KEY = "master.active_provider"
 DEFAULT_PROVIDER = "static"
@@ -54,7 +58,6 @@ PROVISION_START_CMD = os.environ.get(
     "-e WORKER_NODE_ID={node_id} "
     "-e MASTER_BASE_URL={master_base_url} "
     "-e WORKER_API_BASE={worker_api_base} "
-    "-e AUTH_TOKEN={auth_token} "
     f"{PROVISION_WORKER_IMAGE}",
 )
 PROVISION_VERIFY_WAIT_SECONDS = int(os.environ.get("MASTER_PROVISION_VERIFY_WAIT_SECONDS", "30"))
@@ -110,15 +113,61 @@ class StaticProvider(ServerProvider):
         return out
 
 
-class FeishuCliProvider(ServerProvider):
-    name = "feishu_cli"
+class LocalJsonProvider(ServerProvider):
+    name = "local_json"
 
     def get_servers(self) -> list[ServerRecord]:
-        raise NotImplementedError("feishu_cli provider is reserved and not implemented yet")
+        from . import infra_sync
+
+        out = []
+        for item in infra_sync.local_infra_workers():
+            normalized = infra_sync.normalize_worker_record(item)
+            if not normalized:
+                continue
+            out.append(
+                ServerRecord(
+                    node_id=normalized["node_id"],
+                    host=normalized["host"],
+                    username=normalized["ssh_user"],
+                    port=normalized["ssh_port"],
+                    password=normalized.get("ssh_password"),
+                    max_profiles=normalized["max_profiles"],
+                    tags=normalized.get("tags") or [],
+                    enabled=bool(normalized.get("enabled", True)),
+                )
+            )
+        return out
+
+
+class FeishuOpenApiProvider(ServerProvider):
+    name = "feishu_openapi"
+
+    def get_servers(self) -> list[ServerRecord]:
+        out = []
+        source = source_registry.get_infra_source("feishu_openapi")
+        for item in source.list_workers():
+            from . import infra_sync
+
+            normalized = infra_sync.normalize_worker_record(item)
+            if not normalized:
+                continue
+            out.append(
+                ServerRecord(
+                    node_id=normalized["node_id"],
+                    host=normalized["host"],
+                    username=normalized["ssh_user"],
+                    port=normalized["ssh_port"],
+                    password=normalized.get("ssh_password"),
+                    max_profiles=normalized["max_profiles"],
+                    tags=normalized.get("tags") or [],
+                    enabled=bool(normalized.get("enabled", True)),
+                )
+            )
+        return out
 
 
 def available_providers() -> dict[str, ServerProvider]:
-    return {"static": StaticProvider(), "feishu_cli": FeishuCliProvider()}
+    return {"static": StaticProvider(), "local_json": LocalJsonProvider(), "feishu_openapi": FeishuOpenApiProvider()}
 
 
 def get_active_provider_name() -> str:
@@ -128,8 +177,10 @@ def get_active_provider_name() -> str:
 def set_active_provider_name(name: str) -> str:
     if name not in available_providers():
         raise ValueError("provider not supported")
-    if name == "feishu_cli":
-        raise ValueError("feishu_cli provider is reserved and not implemented yet")
+    if name == "feishu_openapi":
+        validation = feishu_contract.validate_config()
+        if not validation["ready"]:
+            raise ValueError(validation["message"])
     db.set_master_setting(ACTIVE_PROVIDER_KEY, name)
     return name
 
@@ -150,18 +201,45 @@ def load_provision_config() -> ProvisionConfig:
     return ProvisionConfig(timeout_seconds=PROVISION_TIMEOUT_SECONDS, max_parallel=max(1, PROVISION_MAX_PARALLEL), bootstrap_cmd=PROVISION_BOOTSTRAP_CMD, start_cmd=PROVISION_START_CMD, verify_wait_seconds=PROVISION_VERIFY_WAIT_SECONDS, verify_interval_seconds=PROVISION_VERIFY_INTERVAL_SECONDS)
 
 
-def _template_values(record: ServerRecord, auth_token: str) -> dict[str, str]:
+def _template_values(record: ServerRecord) -> dict[str, str]:
     raw_values = {
         "node_id": record.node_id,
         "host": record.host,
         "username": record.username,
         "max_profiles": str(record.max_profiles),
         "master_base_url": PROVISION_MASTER_BASE_URL,
-        "auth_token": auth_token,
     }
     worker_api_base = PROVISION_WORKER_API_BASE.format(**raw_values)
     raw_values["worker_api_base"] = worker_api_base
     return {key: shlex.quote(str(value)) for key, value in raw_values.items()}
+
+
+def _record_provision_target(record: ServerRecord, provider_name: str, status: str) -> None:
+    raw_values = {
+        "node_id": record.node_id,
+        "host": record.host,
+        "username": record.username,
+        "max_profiles": str(record.max_profiles),
+        "master_base_url": PROVISION_MASTER_BASE_URL,
+    }
+    worker_api_base = PROVISION_WORKER_API_BASE.format(**raw_values)
+    infra_repository.upsert_worker(
+        {
+            "node_id": record.node_id,
+            "source": provider_name,
+            "source_record_id": record.node_id,
+            "host": record.host,
+            "ssh_user": record.username,
+            "ssh_password": record.password,
+            "ssh_port": record.port,
+            "enabled": record.enabled,
+            "desired_state": "active" if record.enabled else "disabled",
+            "status": status,
+            "max_profiles": record.max_profiles,
+            "tags": record.tags or [],
+            "worker_api_base": worker_api_base,
+        }
+    )
 
 
 def _parse_ts(value: str | None) -> dt.datetime | None:
@@ -213,19 +291,17 @@ def pick_target_node() -> dict[str, Any] | None:
 
 def create_master_task(payload: dict[str, Any]) -> dict[str, Any]:
     target = pick_target_node()
-    return db.create_master_task(profile_id=payload.get("profile_id"), authorized_target=payload["authorized_target"], task_type=payload["task_type"], payload=payload, timeout_seconds=int(payload.get("timeout_seconds") or 300), max_retries=int(payload.get("max_retries") or 1), target_node_id=target["node_id"] if target else None)
+    target_node_id = payload.get("target_node_id") or (target["node_id"] if target else None)
+    max_retries = 1 if payload.get("max_retries") is None else int(payload.get("max_retries") or 0)
+    return db.create_master_task(profile_id=payload.get("profile_id"), authorized_target=payload["authorized_target"], task_type=payload["task_type"], payload=payload, timeout_seconds=int(payload.get("timeout_seconds") or 300), max_retries=max_retries, target_node_id=target_node_id, priority=int(payload.get("priority") or 0))
 
 
-def _fetch_worker_profile_id(node: dict[str, Any], timeout_seconds: float = 5.0) -> str | None:
+def _fetch_worker_profile_id(node: dict[str, Any], preferred_name: str | None = None, timeout_seconds: float = 5.0) -> str | None:
     api_base = (node.get("api_base") or "").strip().rstrip("/")
     if not api_base:
         return None
-    headers = None
-    token = (node.get("token") or "").strip()
-    if token:
-        headers = {"Authorization": f"Bearer {token}"}
     try:
-        with httpx.Client(base_url=api_base, headers=headers, timeout=timeout_seconds) as client:
+        with httpx.Client(base_url=api_base, timeout=timeout_seconds) as client:
             resp = client.get("/api/profiles")
             resp.raise_for_status()
             profiles = resp.json()
@@ -233,24 +309,82 @@ def _fetch_worker_profile_id(node: dict[str, Any], timeout_seconds: float = 5.0)
         return None
     if not isinstance(profiles, list):
         return None
-    for item in profiles:
-        if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("id"):
-            return item["id"]
+    reusable_profiles = [
+        item
+        for item in profiles
+        if isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+        and item.get("id")
+        and item.get("status") not in {"running", "starting"}
+    ]
+    if preferred_name:
+        for item in reusable_profiles:
+            if item.get("name") == preferred_name:
+                return item["id"]
+        return None
+    for item in reusable_profiles:
+        return item["id"]
     return None
 
 
-def _create_worker_profile(node: dict[str, Any], timeout_seconds: float = 8.0) -> str | None:
+def _profile_create_options(payload: dict[str, Any]) -> dict[str, Any]:
+    params = payload.get("biz_params") if isinstance(payload.get("biz_params"), dict) else {}
+    options = params.get("profile_options") if isinstance(params.get("profile_options"), dict) else {}
+    allowed_fields = {
+        "fingerprint_seed",
+        "proxy",
+        "timezone",
+        "locale",
+        "platform",
+        "screen_width",
+        "screen_height",
+        "humanize",
+        "human_preset",
+        "human_config",
+        "headless",
+        "geoip",
+        "backend",
+        "stealth_args",
+        "minimal_cloak",
+        "color_scheme",
+        "launch_args",
+        "notes",
+    }
+    out = {key: value for key, value in options.items() if key in allowed_fields}
+    for key in (
+        "fingerprint_seed",
+        "proxy",
+        "timezone",
+        "locale",
+        "platform",
+        "humanize",
+        "human_preset",
+        "human_config",
+        "headless",
+        "backend",
+        "stealth_args",
+        "minimal_cloak",
+    ):
+        if key in params and key not in out:
+            out[key] = params[key]
+    return out
+
+
+def _create_worker_profile(
+    node: dict[str, Any],
+    profile_name: str | None = None,
+    profile_options: dict[str, Any] | None = None,
+    timeout_seconds: float = 8.0,
+) -> str | None:
     api_base = (node.get("api_base") or "").strip().rstrip("/")
     if not api_base:
         return None
-    headers = None
-    token = (node.get("token") or "").strip()
-    if token:
-        headers = {"Authorization": f"Bearer {token}"}
     node_id = (node.get("node_id") or "worker").strip() or "worker"
-    payload = {"name": f"auto-{node_id}", "platform": "windows"}
+    name = (profile_name or "").strip() or f"auto-{node_id}-{uuid.uuid4().hex[:8]}"
+    payload = {"name": name, "platform": "windows"}
+    payload.update(profile_options or {})
     try:
-        with httpx.Client(base_url=api_base, headers=headers, timeout=timeout_seconds) as client:
+        with httpx.Client(base_url=api_base, timeout=timeout_seconds) as client:
             resp = client.post("/api/profiles", json=payload)
             resp.raise_for_status()
             body = resp.json()
@@ -261,14 +395,15 @@ def _create_worker_profile(node: dict[str, Any], timeout_seconds: float = 8.0) -
 
 
 def ensure_task_profile_for_node(task: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
-    if task.get("task_type") not in {"external_cdp", "open_url"}:
+    if task.get("task_type") not in {"external_cdp", "open_url", "automation_script"}:
         return task
     payload = dict(task.get("payload") or {})
     if (payload.get("profile_id") or "").strip():
         return task
-    profile_id = _fetch_worker_profile_id(node)
+    preferred_name = (payload.get("profile_name") or "").strip() or None
+    profile_id = _fetch_worker_profile_id(node, preferred_name=preferred_name)
     if not profile_id:
-        profile_id = _create_worker_profile(node)
+        profile_id = _create_worker_profile(node, profile_name=preferred_name, profile_options=_profile_create_options(payload))
     if not profile_id:
         return task
     payload["profile_id"] = profile_id
@@ -301,17 +436,21 @@ def _build_ssh_exec(record: ServerRecord, remote_cmd: str) -> tuple[list[str], d
 
 def execute_provision(record: ServerRecord, dry_run: bool, cfg: ProvisionConfig) -> tuple[bool, str]:
     if dry_run:
+        infra_repository.create_event(record.node_id, "provision_dry_run", "provision dry-run skipped remote execution", "created")
         return True, "dry-run"
-    auth_token = os.environ.get("AUTH_TOKEN") or ""
-    values = _template_values(record, auth_token)
+    values = _template_values(record)
     bootstrap_cmd = cfg.bootstrap_cmd.format(**values)
     start_cmd = cfg.start_cmd.format(**values)
     remote_cmd = f"{bootstrap_cmd}; {start_cmd}"
     cmd, env = _build_ssh_exec(record, remote_cmd)
     askpass_path = env.get("SSH_ASKPASS") if env else None
+    infra_repository.create_event(record.node_id, "provision_started", f"host={record.host}", "created")
+    infra_repository.create_event(record.node_id, "ssh_connecting", f"{record.username}@{record.host}:{record.port}", "ssh_connecting")
+    infra_repository.create_event(record.node_id, "docker_check", "remote command will auto-detect docker or sudo -n docker", "docker_check")
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=cfg.timeout_seconds, env=env)
     except Exception as exc:
+        infra_repository.create_event(record.node_id, "provision_failed", str(exc), "ssh_connecting")
         return False, str(exc)
     finally:
         if askpass_path:
@@ -320,14 +459,23 @@ def execute_provision(record: ServerRecord, dry_run: bool, cfg: ProvisionConfig)
             except Exception:
                 pass
     if proc.returncode != 0:
-        return False, (proc.stderr or proc.stdout or "ssh failed").strip()
+        message = (proc.stderr or proc.stdout or "ssh failed").strip()
+        infra_repository.create_event(record.node_id, "provision_failed", message, "remote_command")
+        return False, message
+    infra_repository.create_event(record.node_id, "worker_container_started", (proc.stdout or "remote command ok").strip(), "container_start")
     return True, (proc.stdout or "ok").strip()
 
 
-def run_provision(dry_run: bool = True) -> dict[str, Any]:
+def run_provision(dry_run: bool = True, node_id: str | None = None) -> dict[str, Any]:
     cfg = load_provision_config()
     provider = get_active_provider()
     records = [record for record in provider.get_servers() if record.enabled]
+    if node_id:
+        records = [record for record in records if record.node_id == node_id]
+        if not records:
+            raise ValueError(f"provision target not found: {node_id}")
+    for record in records:
+        _record_provision_target(record, provider.name, "pending_deploy" if dry_run else "deploying")
     job = db.create_provision_job(provider=provider.name, total_servers=len(records), dry_run=dry_run)
     success_count = 0
     failed_count = 0
@@ -335,9 +483,16 @@ def run_provision(dry_run: bool = True) -> dict[str, Any]:
     def run_one(record: ServerRecord) -> tuple[ServerRecord, bool, str]:
         ok, message = execute_provision(record, dry_run=dry_run, cfg=cfg)
         if ok and not dry_run:
+            infra_repository.create_event(record.node_id, "wait_heartbeat", "waiting for worker registration heartbeat", "wait_heartbeat")
             verified, verify_msg = verify_node_registered(record.node_id, job.get("created_at"), cfg.verify_wait_seconds, cfg.verify_interval_seconds)
             ok = verified
             message = f"{message}; {verify_msg}"
+            infra_repository.create_event(
+                record.node_id,
+                "provision_success" if ok else "provision_failed",
+                verify_msg,
+                "wait_heartbeat",
+            )
         return record, ok, message
 
     max_workers = min(max(1, cfg.max_parallel), max(1, len(records)))

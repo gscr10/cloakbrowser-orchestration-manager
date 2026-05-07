@@ -1,0 +1,201 @@
+from __future__ import annotations
+
+import asyncio
+import random
+import time
+from typing import Any
+from urllib.parse import urlsplit
+
+from worker_backend.automation.context import AutomationContext
+from worker_backend.automation.errors import AutomationScriptError
+
+NOL_LOGIN_URL = "https://world.nol.com/en/auth-web/login?returnUrl=%2Fen%2Fmy-info"
+
+
+async def _safe_eval(page: Any, expr: str, default: Any = None) -> Any:
+    try:
+        return await page.evaluate(expr)
+    except Exception:
+        return default
+
+
+async def _turnstile_solved(page: Any) -> bool:
+    state = await _safe_eval(
+        page,
+        """() => {
+            const widget = document.querySelector('[data-has-token], .cf-turnstile, [data-sitekey]');
+            const input = document.querySelector('input[name="cf-turnstile-response"]');
+            return {
+                tokenAttr: widget ? widget.getAttribute('data-has-token') : null,
+                inputLen: input ? input.value.length : 0,
+            };
+        }""",
+        {},
+    ) or {}
+    return state.get("tokenAttr") == "true" or int(state.get("inputLen") or 0) > 0
+
+
+async def _click_turnstile_with_locators(page: Any) -> bool:
+    for frame in page.frames:
+        if "challenges.cloudflare.com" not in (frame.url or ""):
+            continue
+        for selector in ('input[type="checkbox"]', '[type="checkbox"]', "label", "body"):
+            try:
+                locator = frame.locator(selector).first
+                if await locator.count() == 0:
+                    continue
+                kwargs: dict[str, Any] = {"timeout": 3000}
+                if selector == "body":
+                    kwargs["position"] = {"x": random.randint(24, 38), "y": random.randint(22, 36)}
+                await locator.click(**kwargs)
+                return True
+            except Exception:
+                continue
+    return False
+
+
+async def _wait_turnstile(page: Any, timeout_seconds: int) -> bool:
+    start = time.monotonic()
+    clicked = False
+    while time.monotonic() - start < timeout_seconds:
+        if await _turnstile_solved(page):
+            return True
+        if not clicked and time.monotonic() - start > 3:
+            clicked = await _click_turnstile_with_locators(page)
+            if clicked:
+                await asyncio.sleep(4)
+                continue
+        await asyncio.sleep(1)
+    return False
+
+
+async def _verify_login(page: Any, account: str) -> bool:
+    current_url = page.url
+    path = urlsplit(current_url).path
+    try:
+        page_text = (await page.locator("body").inner_text(timeout=5000))[:5000]
+    except Exception:
+        page_text = ""
+    still_on_login = "auth-web/login" in path
+    on_account_page = "my-info" in path or "my-page" in path
+    has_account_content = account in page_text or "Reservations" in page_text or "예약" in page_text
+    return (on_account_page or has_account_content) and not still_on_login
+
+
+async def _close_page(page: Any) -> None:
+    try:
+        await page.close()
+    except Exception:
+        pass
+
+
+async def _safe_title(page: Any) -> str:
+    try:
+        return await page.title()
+    except Exception:
+        return ""
+
+
+async def _safe_screenshot(page: Any, path: Any) -> tuple[list[dict[str, str]], str | None]:
+    try:
+        await page.screenshot(path=str(path), full_page=True)
+    except Exception as exc:
+        return [], str(exc)
+    return [{"type": "screenshot", "uri": str(path)}], None
+
+
+async def _attempt_login(
+    page: Any,
+    target_url: str,
+    account: str,
+    password: str,
+    timeout_ms: int,
+    turnstile_timeout: int,
+) -> tuple[bool, bool, Any]:
+    page.set_default_timeout(30000)
+    page.set_default_navigation_timeout(timeout_ms)
+
+    await page.goto(target_url, wait_until="domcontentloaded", timeout=timeout_ms)
+    webdriver = await _safe_eval(page, "() => navigator.webdriver", "unknown")
+
+    email_input = page.locator('input[name="email"]')
+    password_input = page.locator('input[name="password"]')
+    await email_input.fill("")
+    await email_input.type(account, delay=random.randint(60, 140))
+    await password_input.fill("")
+    await password_input.type(password, delay=random.randint(70, 160))
+
+    turnstile_ok = await _wait_turnstile(page, turnstile_timeout)
+    if turnstile_ok:
+        await email_input.fill(account)
+        await password_input.fill(password)
+        login_button = page.get_by_role("button", name="Log in")
+        if await login_button.count() == 0:
+            login_button = page.get_by_role("button", name="Login")
+        await login_button.click(timeout=10000)
+        try:
+            await page.wait_for_url("**/my-info**", timeout=25000)
+        except Exception:
+            try:
+                await page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+        await asyncio.sleep(2)
+
+    login_ok = await _verify_login(page, account)
+    return turnstile_ok, login_ok, webdriver
+
+
+async def nol_native_login_v1(ctx: AutomationContext) -> dict[str, Any]:
+    account = ctx.account()
+    password = str(ctx.params.get("password") or ctx.payload.get("password") or "").strip()
+    if not account or not password:
+        raise ValueError("nol_native_login_v1 requires account/email and password")
+
+    timeout_ms = max(60000, ctx.timeout_seconds * 1000)
+    turnstile_timeout = int(ctx.params.get("auto_turnstile_timeout") or 80)
+    page_attempts = max(1, int(ctx.params.get("turnstile_page_attempts") or 2))
+    require_login = bool(ctx.params.get("require_login", True))
+    page = ctx.page
+    target_url = ctx.target_url(NOL_LOGIN_URL)
+
+    turnstile_ok = False
+    login_ok = False
+    webdriver: Any = "unknown"
+    attempt = 0
+    for attempt in range(1, page_attempts + 1):
+        if attempt > 1:
+            await _close_page(page)
+            page = await ctx.new_page()
+        turnstile_ok, login_ok, webdriver = await _attempt_login(
+            page,
+            target_url,
+            account,
+            password,
+            timeout_ms,
+            turnstile_timeout,
+        )
+        if turnstile_ok or login_ok:
+            break
+
+    login_ok = await _verify_login(page, account)
+    screenshot_path = ctx.artifact_path("nol-native-login")
+    artifacts, screenshot_error = await _safe_screenshot(page, screenshot_path)
+    result = {
+        "url": page.url,
+        "title": await _safe_title(page),
+        "account": account,
+        "turnstile": turnstile_ok,
+        "login": login_ok,
+        "webdriver": webdriver,
+        "attempts": attempt,
+        "artifacts": artifacts,
+    }
+    if screenshot_error:
+        result["screenshot_error"] = screenshot_error
+    if require_login and not (turnstile_ok and login_ok):
+        raise AutomationScriptError(
+            f"nol native login failed: turnstile={turnstile_ok}, login={login_ok}, url={page.url}",
+            result,
+        )
+    return result

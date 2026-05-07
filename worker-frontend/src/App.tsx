@@ -1,95 +1,21 @@
 import { useState, useCallback, useEffect } from "react";
-import { Lock, PanelLeftClose, PanelLeft, Plus, Sparkles } from "lucide-react";
+import { PanelLeftClose, PanelLeft, Plus, Sparkles } from "lucide-react";
 import { useProfiles } from "./hooks/useProfiles";
-import { api, setOnUnauthorized, type ProfileCreateData } from "./lib/api";
+import { type ProfileCreateData } from "./lib/api";
 import { ProfileList } from "./components/ProfileList";
 import { ProfileForm } from "./components/ProfileForm";
 import { LaunchButton } from "./components/LaunchButton";
 import { StatusIndicator } from "./components/StatusIndicator";
-import { LoginPage } from "./components/LoginPage";
 import { OrchestrationPanel } from "./components/OrchestrationPanel";
 import { VncWorkspace } from "./components/VncWorkspace";
 
-type AuthState = "checking" | "required" | "ok" | "error";
 type View = "empty" | "create" | "edit" | "view";
 
 export default function App() {
-  const [authState, setAuthState] = useState<AuthState>("checking");
-  const [authRequired, setAuthRequired] = useState(false);
-
-  useEffect(() => {
-    setOnUnauthorized(() => setAuthState("required"));
-
-    api.authStatus()
-      .then(({ auth_required, authenticated }) => {
-        setAuthRequired(auth_required);
-        if (!auth_required || authenticated) {
-          setAuthState("ok");
-        } else {
-          setAuthState("required");
-        }
-      })
-      .catch((err) => {
-        console.warn("[auth] status check failed:", err);
-        setAuthState("error");
-      });
-
-    return () => setOnUnauthorized(null);
-  }, []);
-
-  if (authState === "checking") {
-    return (
-      <div className="flex h-screen items-center justify-center bg-[#0a0f1f] text-gray-300">
-        <div className="text-sm text-gray-500">Loading...</div>
-      </div>
-    );
-  }
-
-  if (authState === "error") {
-    return (
-      <div className="flex h-screen items-center justify-center bg-[#0a0f1f] px-6">
-        <div className="panel max-w-sm rounded-3xl p-8 text-center">
-          <p className="mb-2 text-sm text-red-300">Unable to reach the server</p>
-          <button
-            onClick={() => {
-              setAuthState("checking");
-              api.authStatus()
-                .then(({ auth_required, authenticated }) => {
-                  setAuthRequired(auth_required);
-                  setAuthState(!auth_required || authenticated ? "ok" : "required");
-                })
-                .catch(() => setAuthState("error"));
-            }}
-            className="text-xs text-gray-400 underline hover:text-gray-200"
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (authState === "required") {
-    return <LoginPage onSuccess={() => setAuthState("ok")} />;
-  }
-
-  return (
-    <AppContent
-      authRequired={authRequired}
-      onLogout={async () => {
-        await api.logout();
-        setAuthState("required");
-      }}
-    />
-  );
+  return <AppContent />;
 }
 
-interface AppContentProps {
-  authRequired: boolean;
-  onLogout: () => void;
-}
-
-function AppContent({ authRequired, onLogout }: AppContentProps) {
+function AppContent() {
   const { profiles, loading, error, create, update, remove, launch, stop } = useProfiles();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<View>("empty");
@@ -282,16 +208,6 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
                   onLaunch={handleLaunch}
                   onStop={handleStop}
                 />
-              )}
-
-              {authRequired && (
-                <button
-                  onClick={onLogout}
-                  className="rounded-lg border border-white/10 bg-white/5 p-2 text-gray-400 transition hover:bg-white/10 hover:text-white"
-                  title="Log out"
-                >
-                  <Lock className="h-3.5 w-3.5" />
-                </button>
               )}
             </div>
           </div>
