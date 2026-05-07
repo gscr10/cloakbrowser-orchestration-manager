@@ -18,6 +18,14 @@ button.secondary { background: #1b2940; border: 1px solid #314466; }
 button.ghost { background: transparent; color: #8fb4ff; padding: 4px 6px; }
 button.warn { background: #c94828; }
 button:disabled { opacity: 0.55; cursor: not-allowed; }
+select.source-select {
+  min-width: 170px;
+  padding: 8px 10px;
+  color: #e6edf7;
+  background: #0d182b;
+  border: 1px solid #314466;
+  border-radius: 8px;
+}
 
 .app-shell {
   min-height: 100vh;

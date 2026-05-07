@@ -147,7 +147,10 @@ export default function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [feishuCheck, setFeishuCheck] = useState(null);
+  const [feishuSmoke, setFeishuSmoke] = useState(null);
   const [sourceRegistry, setSourceRegistry] = useState({ sources: [], sinks: [] });
+  const [infraSource, setInfraSource] = useState("local_json");
+  const [bizSource, setBizSource] = useState("local_json");
   const [reconcileResult, setReconcileResult] = useState(null);
   const [newTask, setNewTask] = useState({
     profile_id: "",
@@ -318,19 +321,19 @@ export default function App() {
   };
 
   const syncInfra = async () => {
-    const result = await api("/api/master/infra/sync", { method: "POST" });
+    const result = await api("/api/master/infra/sync", { method: "POST", body: JSON.stringify({ source: infraSource }) });
     setActivePage("infra");
-    setNotice(`基础设施同步完成：${result.count || 0} 条`);
+    setNotice(`基础设施同步完成：${result.count || 0} 条（${result.source || infraSource}）`);
     await refreshCore();
   };
 
   const syncBiz = async (schedule = false) => {
     const result = await api("/api/master/biz/sync", {
       method: "POST",
-      body: JSON.stringify({ schedule })
+      body: JSON.stringify({ schedule, source: bizSource })
     });
     setActivePage("biz");
-    setNotice(schedule ? `业务同步并调度完成：${result.count || 0} 条` : `业务同步完成：${result.count || 0} 条`);
+    setNotice(schedule ? `业务同步并调度完成：${result.count || 0} 条（${result.source || bizSource}）` : `业务同步完成：${result.count || 0} 条（${result.source || bizSource}）`);
     await refreshCore();
   };
 
@@ -350,6 +353,11 @@ export default function App() {
   const validateFeishu = async () => {
     const result = await api("/api/master/providers/feishu-openapi/validate", { method: "POST" });
     setFeishuCheck(result);
+  };
+
+  const smokeFeishu = async () => {
+    const result = await api("/api/master/providers/feishu-openapi/smoke", { method: "POST" });
+    setFeishuSmoke(result);
   };
 
   const reconcileInfra = async (dryRun = true, nodeId = null) => {
@@ -413,6 +421,9 @@ export default function App() {
           syncInfra={syncInfra}
           reconcileInfra={reconcileInfra}
           reconcileResult={reconcileResult}
+          infraSource={infraSource}
+          setInfraSource={setInfraSource}
+          sourceRegistry={sourceRegistry}
         />
       );
     }
@@ -427,6 +438,9 @@ export default function App() {
           syncBiz={syncBiz}
           cancelBizJob={cancelBizJob}
           requeueBizJob={requeueBizJob}
+          bizSource={bizSource}
+          setBizSource={setBizSource}
+          sourceRegistry={sourceRegistry}
         />
       );
     }
@@ -459,7 +473,9 @@ export default function App() {
           provisionServers={provisionServers}
           setProvider={setProvider}
           validateFeishu={validateFeishu}
+          smokeFeishu={smokeFeishu}
           feishuCheck={feishuCheck}
+          feishuSmoke={feishuSmoke}
           sourceRegistry={sourceRegistry}
         />
       );
@@ -612,8 +628,9 @@ function FlowArrow() {
   return <div className="flow-arrow">→</div>;
 }
 
-function InfraPage({ infraWorkers, infraCapabilities, infraEvents, infraSyncRuns, nodes, provisionServers, visibleProvisionServers, showEnabledOnly, setShowEnabledOnly, provisionJobs, selectedJobId, setSelectedJobId, jobDetail, runProvision, syncInfra, reconcileInfra, reconcileResult }) {
+function InfraPage({ infraWorkers, infraCapabilities, infraEvents, infraSyncRuns, nodes, provisionServers, visibleProvisionServers, showEnabledOnly, setShowEnabledOnly, provisionJobs, selectedJobId, setSelectedJobId, jobDetail, runProvision, syncInfra, reconcileInfra, reconcileResult, infraSource, setInfraSource, sourceRegistry }) {
   const workerByNode = new Map(nodes.map((node) => [node.node_id, node]));
+  const infraSources = (sourceRegistry?.sources || []).filter((source) => source.kind === "infra" || source.kind === "infra_biz");
   return (
     <div className="page-stack">
       <section className="page-header-card">
@@ -623,6 +640,10 @@ function InfraPage({ infraWorkers, infraCapabilities, infraEvents, infraSyncRuns
           <p>基础设施层不理解账号密码和购票流程，只向业务层提供可调度 Worker 查询能力。</p>
         </div>
         <div className="header-actions">
+          <select className="source-select" value={infraSource} onChange={(e) => setInfraSource(e.target.value)}>
+            {infraSources.length === 0 && <option value="local_json">local_json</option>}
+            {infraSources.map((source) => <option key={`${source.name}-${source.kind}`} value={source.name}>{source.name}{source.ready ? "" : "（未就绪）"}</option>)}
+          </select>
           <button onClick={syncInfra}>同步 Worker 表</button>
           <button className="secondary" onClick={() => reconcileInfra(true)}>Reconcile 计划</button>
           <button className="secondary" onClick={() => runProvision(true)}>部署演练</button>
@@ -784,8 +805,9 @@ function InfraPage({ infraWorkers, infraCapabilities, infraEvents, infraSyncRuns
   );
 }
 
-function BizPage({ bizJobs, bizRuns, bizArtifacts, selectedBizJob, setSelectedBizJobId, syncBiz, cancelBizJob, requeueBizJob }) {
+function BizPage({ bizJobs, bizRuns, bizArtifacts, selectedBizJob, setSelectedBizJobId, syncBiz, cancelBizJob, requeueBizJob, bizSource, setBizSource, sourceRegistry }) {
   const runsForJob = selectedBizJob ? bizRuns.filter((run) => run.biz_job_id === selectedBizJob.id) : [];
+  const bizSources = (sourceRegistry?.sources || []).filter((source) => source.kind === "biz" || source.kind === "infra_biz");
   return (
     <div className="page-stack">
       <section className="page-header-card">
@@ -795,6 +817,10 @@ function BizPage({ bizJobs, bizRuns, bizArtifacts, selectedBizJob, setSelectedBi
           <p>业务层不处理 SSH 和 Docker，只依赖基础设施层返回的可调度 Worker。</p>
         </div>
         <div className="header-actions">
+          <select className="source-select" value={bizSource} onChange={(e) => setBizSource(e.target.value)}>
+            {bizSources.length === 0 && <option value="local_json">local_json</option>}
+            {bizSources.map((source) => <option key={`${source.name}-${source.kind}`} value={source.name}>{source.name}{source.ready ? "" : "（未就绪）"}</option>)}
+          </select>
           <button onClick={() => syncBiz(false)}>同步业务表</button>
           <button className="secondary" onClick={() => syncBiz(true)}>同步并调度</button>
         </div>
@@ -1027,7 +1053,7 @@ function EventsPage({ infraEvents, bizEvents, taskEvents }) {
   );
 }
 
-function SettingsPage({ providers, provisionServers, setProvider, validateFeishu, feishuCheck, sourceRegistry }) {
+function SettingsPage({ providers, provisionServers, setProvider, validateFeishu, smokeFeishu, feishuCheck, feishuSmoke, sourceRegistry }) {
   return (
     <div className="page-stack">
       <section className="page-header-card">
@@ -1088,8 +1114,10 @@ function SettingsPage({ providers, provisionServers, setProvider, validateFeishu
               );
             })}
             <button className="secondary" onClick={validateFeishu}>查看 feishu_openapi 状态</button>
+            <button className="secondary" onClick={smokeFeishu}>Feishu 联调检查</button>
           </div>
           {feishuCheck && <div className="detail-box">校验结果：{feishuCheck.ready ? "可用" : "未就绪"}（{feishuCheck.message || "-"}）</div>}
+          {feishuSmoke && <pre>{safeJson(feishuSmoke)}</pre>}
         </div>
 
         <div className="panel">

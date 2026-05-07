@@ -75,6 +75,10 @@ async def tick(browser_mgr: BrowserManager, task_id: str | None = None) -> dict[
     try:
         running = await browser_mgr.launch(runtime_profile)
         result = await profile_runtime.execute_task(running, task)
+        latest = db.get_task(task["id"])
+        if latest and latest.get("status") == "cancelled":
+            db.update_profile_run(run["id"], status="cancelled", stopped_at=db._now(), failure_reason=latest.get("failure_reason"))
+            return scheduler_status(browser_mgr)
         if task["task_type"] in {"open_url", "automation_script"}:
             payload = dict(task.get("payload") or {})
             if result:
@@ -82,6 +86,10 @@ async def tick(browser_mgr: BrowserManager, task_id: str | None = None) -> dict[
             db.update_task(task["id"], status="success", payload=payload)
         db.update_profile_run(run["id"], status="running")
     except Exception as exc:
+        latest = db.get_task(task["id"])
+        if latest and latest.get("status") == "cancelled":
+            db.update_profile_run(run["id"], status="cancelled", stopped_at=db._now(), failure_reason=latest.get("failure_reason") or str(exc))
+            return scheduler_status(browser_mgr)
         payload = dict(task.get("payload") or {})
         result = getattr(exc, "result", None)
         if isinstance(result, dict) and result:
@@ -91,6 +99,30 @@ async def tick(browser_mgr: BrowserManager, task_id: str | None = None) -> dict[
         raise
 
     return scheduler_status(browser_mgr)
+
+
+async def cancel_task(browser_mgr: BrowserManager, task_id: str, reason: str = "cancelled by operator") -> dict[str, Any] | None:
+    """Cancel a queued or running local task and stop its browser profile."""
+    task = db.get_task(task_id)
+    if not task:
+        return None
+    if task["status"] not in {"queued", "running"}:
+        return task
+    updated = db.update_task(task_id, status="cancelled", failure_reason=reason)
+    if task["status"] == "running":
+        if task.get("run_id"):
+            db.update_profile_run(task["run_id"], status="cancelled", stopped_at=db._now(), failure_reason=reason)
+        await browser_mgr.stop(task["profile_id"])
+    return updated
+
+
+async def cancel_distributed_task(browser_mgr: BrowserManager, master_task_id: str, reason: str = "cancelled by master") -> dict[str, Any] | None:
+    """Cancel a local task that was created for a pulled Master task."""
+    for task in db.list_tasks():
+        payload = task.get("payload") or {}
+        if payload.get("master_task_id") == master_task_id:
+            return await cancel_task(browser_mgr, task["id"], reason=reason)
+    return None
 
 
 def scheduler_status(browser_mgr: BrowserManager) -> dict[str, int]:

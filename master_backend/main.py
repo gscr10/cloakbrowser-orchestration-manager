@@ -101,6 +101,26 @@ async def _artifact_response(artifact: dict[str, object]) -> Response:
     media_type = resp.headers.get("content-type") or "application/octet-stream"
     return Response(content=resp.content, media_type=media_type)
 
+
+async def _request_worker_task_cancel(task: dict[str, object]) -> dict[str, object] | None:
+    node_id = task.get("target_node_id")
+    if not node_id:
+        return None
+    node = db.get_master_node(str(node_id))
+    api_base = (node or {}).get("api_base")
+    if not api_base:
+        return None
+    try:
+        async with httpx.AsyncClient(base_url=str(api_base).rstrip("/"), timeout=10.0) as client:
+            resp = await client.post(f"/api/distributed/tasks/{task['id']}/cancel")
+            if resp.status_code == 404:
+                return {"ok": False, "status_code": 404, "message": "worker local task not found"}
+            resp.raise_for_status()
+            return {"ok": True, "task": resp.json()}
+    except Exception as exc:
+        logger.warning("Failed to cancel worker task %s on %s: %s", task.get("id"), node_id, exc)
+        return {"ok": False, "message": str(exc)}
+
 MASTER_FRONTEND_DIR = Path(__file__).parent.parent / "master-frontend" / "dist"
 if MASTER_FRONTEND_DIR.exists():
     assets_dir = MASTER_FRONTEND_DIR / "assets"
@@ -256,10 +276,14 @@ async def master_report_task(task_id: str, req: MasterTaskReportRequest):
         raise HTTPException(status_code=409, detail="Task belongs to another node")
     if req.dispatch_id and task.get("dispatch_id") and req.dispatch_id != task.get("dispatch_id"):
         raise HTTPException(status_code=409, detail="dispatch_id mismatch")
+    if task.get("status") == "cancelled" and req.status != "cancelled":
+        db.create_master_task_event(task_id, req.node_id, "report_ignored", f"ignored {req.status} report for cancelled task")
+        return redaction.redact(task)
     mapped = {
         "started": "running",
         "success": "success",
         "failed": "failed",
+        "cancelled": "cancelled",
     }[req.status]
     payload = task.get("payload") or {}
     if req.status == "started":
@@ -306,7 +330,7 @@ async def master_report_task(task_id: str, req: MasterTaskReportRequest):
         update_fields["payload_json"] = json.dumps(next_payload)
     updated = db.update_master_task(task_id, **update_fields)
     db.create_master_task_event(task_id, req.node_id, req.status, req.failure_reason)
-    if req.status in {"success", "failed"}:
+    if req.status in {"success", "failed", "cancelled"}:
         biz_services.mark_task_finished(task, req.node_id, req.status, result=dict(req.result), failure_reason=req.failure_reason)
     return redaction.redact(updated)
 
@@ -330,6 +354,26 @@ async def master_set_provider(req: MasterProviderUpdateRequest):
 @app.post("/api/master/providers/feishu-openapi/validate")
 async def master_validate_feishu_openapi_provider():
     return feishu_contract.validate_config()
+
+
+@app.post("/api/master/providers/feishu-openapi/smoke")
+async def master_smoke_feishu_openapi_provider():
+    validation = feishu_contract.validate_config()
+    if not validation["ready"]:
+        return {"ready": False, "message": validation["message"], "missing_env": validation["missing_env"], "contract": validation["contract"]}
+    try:
+        source = source_registry.get_infra_source("feishu_openapi")
+        workers = await run_in_threadpool(source.list_workers)
+        jobs = await run_in_threadpool(source.list_jobs)
+    except Exception as exc:
+        return {"ready": False, "message": f"Feishu OpenAPI request failed: {exc}", "missing_env": [], "contract": validation["contract"]}
+    return {
+        "ready": True,
+        "message": "Feishu OpenAPI read smoke succeeded",
+        "infra_workers_count": len(workers),
+        "biz_jobs_count": len(jobs),
+        "writeback_sink": source_registry.get_writeback_sink("feishu_openapi").name,
+    }
 
 
 @app.get("/api/master/sources")
@@ -456,12 +500,21 @@ async def master_cancel_task(task_id: str):
     task = db.get_master_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    worker_cancel = None
+    if task.get("status") in {"dispatched", "running"}:
+        worker_cancel = await _request_worker_task_cancel(task)
     updated = db.update_master_task(task_id, status="cancelled", failure_reason="cancelled by operator")
     db.create_master_task_event(task_id, task.get("target_node_id"), "cancelled", "cancelled by operator")
+    if worker_cancel:
+        event_type = "worker_cancel_requested" if worker_cancel.get("ok") else "worker_cancel_failed"
+        db.create_master_task_event(task_id, task.get("target_node_id"), event_type, json.dumps(worker_cancel, ensure_ascii=False))
     payload = task.get("payload") or {}
     if payload.get("biz_job_id"):
         biz_services.cancel_biz_job(payload["biz_job_id"], "cancelled by operator")
-    return redaction.redact(updated)
+    result = dict(updated or {})
+    if worker_cancel:
+        result["worker_cancel"] = worker_cancel
+    return redaction.redact(result)
 
 
 @app.post("/api/master/tasks/{task_id}/requeue")

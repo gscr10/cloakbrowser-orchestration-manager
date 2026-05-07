@@ -1081,6 +1081,16 @@ def test_master_sources_expose_feishu_contract(master_app_client: TestClient, mo
     assert feishu_sink["ready"] is False
 
 
+def test_feishu_smoke_reports_missing_config(master_app_client: TestClient, monkeypatch):
+    monkeypatch.delenv("FEISHU_APP_ID", raising=False)
+
+    smoke = master_app_client.post("/api/master/providers/feishu-openapi/smoke")
+
+    assert smoke.status_code == 200
+    assert smoke.json()["ready"] is False
+    assert "FEISHU_APP_ID" in smoke.json()["missing_env"]
+
+
 def test_feishu_record_mapping_coerces_bitable_fields():
     from master_backend import feishu_contract
     from master_backend.feishu_openapi import map_record
@@ -1107,7 +1117,10 @@ def test_feishu_record_mapping_coerces_bitable_fields():
     assert mapped["tags"] == ["kr", "ticket"]
 
 
-def test_master_task_priority_and_cancel_requeue(master_app_client: TestClient):
+def test_master_task_priority_and_cancel_requeue(master_app_client: TestClient, monkeypatch):
+    from unittest.mock import AsyncMock
+    from master_backend import main
+
     master_app_client.post(
         "/api/master/nodes/register",
         json={"node_id": "worker-a", "hostname": "worker-a.local", "max_profiles": 10},
@@ -1124,10 +1137,21 @@ def test_master_task_priority_and_cancel_requeue(master_app_client: TestClient):
     pulled = master_app_client.post("/api/master/tasks/pull", json={"node_id": "worker-a"}).json()["task"]
     assert pulled["id"] == high["id"]
     assert pulled["priority"] == 50
+    monkey_cancel = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(main, "_request_worker_task_cancel", monkey_cancel)
+    started = master_app_client.post(
+        f"/api/master/tasks/{high['id']}/report",
+        json={"node_id": "worker-a", "dispatch_id": pulled["dispatch_id"], "status": "started"},
+    )
+    assert started.status_code == 200
 
     cancelled = master_app_client.post(f"/api/master/tasks/{low['id']}/cancel")
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
+    worker_cancelled = master_app_client.post(f"/api/master/tasks/{high['id']}/cancel")
+    assert worker_cancelled.status_code == 200
+    assert worker_cancelled.json()["worker_cancel"] == {"ok": True}
+    monkey_cancel.assert_awaited_once()
 
     requeued = master_app_client.post(f"/api/master/tasks/{low['id']}/requeue")
     assert requeued.status_code == 200

@@ -581,9 +581,17 @@ async def cancel_task(task_id: str):
     task = db.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    if task["status"] != "queued":
-        raise HTTPException(status_code=409, detail="Only queued tasks can be cancelled")
-    updated = db.update_task(task_id, status="cancelled")
+    if task["status"] not in {"queued", "running"}:
+        raise HTTPException(status_code=409, detail="Only queued or running tasks can be cancelled")
+    updated = await scheduler.cancel_task(browser_mgr, task_id)
+    return TaskResponse(**updated)
+
+
+@app.post("/api/distributed/tasks/{master_task_id}/cancel", response_model=TaskResponse)
+async def cancel_distributed_task(master_task_id: str):
+    updated = await scheduler.cancel_distributed_task(browser_mgr, master_task_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Distributed task not found")
     return TaskResponse(**updated)
 
 

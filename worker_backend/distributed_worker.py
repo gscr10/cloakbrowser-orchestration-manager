@@ -41,6 +41,8 @@ async def process_one_task(client: httpx.AsyncClient, cfg: dict[str, Any], brows
         profile_id = payload.get("profile_id")
         if not profile_id:
             raise ValueError("missing profile_id")
+        local_payload = dict(payload)
+        local_payload["master_task_id"] = task_id
         local_task = scheduler.submit_task(
             {
                 "profile_id": profile_id,
@@ -48,23 +50,24 @@ async def process_one_task(client: httpx.AsyncClient, cfg: dict[str, Any], brows
                 "task_type": payload.get("task_type", "external_cdp"),
                 "url": payload.get("url"),
                 "timeout_seconds": int(payload.get("timeout_seconds") or 300),
-                "payload": payload,
+                "payload": local_payload,
             }
         )
         await scheduler.tick(browser_mgr, task_id=local_task["id"])
         latest = db.get_task(local_task["id"])
-        if not latest or latest.get("status") in {"queued", "failed"}:
+        if not latest or latest.get("status") in {"queued", "failed", "cancelled"}:
             reason = latest.get("failure_reason") if latest else "local task missing"
             result = {}
             if latest and isinstance(latest.get("payload"), dict):
                 result = latest["payload"].get("result") or {}
+            status = "cancelled" if latest and latest.get("status") == "cancelled" else "failed"
             await client.post(
                 f"/api/master/tasks/{task_id}/report",
                 json={
                     "node_id": cfg["node_id"],
-                    "status": "failed",
+                    "status": status,
                     "dispatch_id": dispatch_id,
-                    "failure_reason": reason or "local task failed",
+                    "failure_reason": reason or ("local task cancelled" if status == "cancelled" else "local task failed"),
                     "result": result,
                 },
             )
