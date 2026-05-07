@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from . import feishu_contract
+from .feishu_openapi import FeishuBitableClient
 from .source_adapters import FeishuOpenApiSource, LocalJsonSource, NoopWriteBackSink, WriteBackSink
 
 
@@ -104,7 +105,8 @@ class FeishuOpenApiWriteBackSink(NoopWriteBackSink):
     name = "feishu_openapi"
 
     def write_biz_status(self, job: dict[str, Any], status: str, payload: dict[str, Any]) -> dict[str, Any]:
-        validation = feishu_contract.validate_config()
+        client = FeishuBitableClient()
+        validation = client.validate()
         if not validation["ready"]:
             return {
                 "sink": self.name,
@@ -116,13 +118,26 @@ class FeishuOpenApiWriteBackSink(NoopWriteBackSink):
                 "missing_env": validation["missing_env"],
                 "payload": payload,
             }
+        record_id = job.get("feishu_record_id") or job.get("source_record_id")
+        if not record_id:
+            return {
+                "sink": self.name,
+                "written": False,
+                "job_id": job.get("id"),
+                "status": status,
+                "reason": "job does not have a Feishu record id",
+                "payload": payload,
+            }
+        fields = _writeback_fields(job, status, payload)
+        response = client.update_biz_record(str(record_id), fields)
         return {
             "sink": self.name,
-            "written": False,
+            "written": True,
             "job_id": job.get("id"),
             "source_record_id": job.get("source_record_id"),
             "status": status,
-            "reason": "Feishu OpenAPI HTTP writer contract is configured but network writer is not implemented",
+            "fields": fields,
+            "response": response,
             "payload": payload,
         }
 
@@ -134,3 +149,19 @@ def get_writeback_sink(name: str | None = None) -> WriteBackSink:
     if selected == "feishu_openapi":
         return FeishuOpenApiWriteBackSink()
     raise ValueError(f"unsupported write-back sink: {selected}")
+
+
+def _writeback_fields(job: dict[str, Any], status: str, payload: dict[str, Any]) -> dict[str, Any]:
+    mapping = feishu_contract.WRITEBACK_FIELD_MAPPING
+    fields: dict[str, Any] = {
+        mapping["status"]: status,
+        mapping["master_task_id"]: payload.get("master_task_id") or job.get("master_task_id"),
+        mapping["assigned_worker"]: job.get("assigned_worker"),
+        mapping["profile_id"]: job.get("profile_id"),
+        mapping["last_run_at"]: job.get("last_run_at"),
+    }
+    if status == "success":
+        fields[mapping["result_summary"]] = payload.get("result_summary")
+    else:
+        fields[mapping["error_message"]] = payload.get("error_message")
+    return {key: value for key, value in fields.items() if value is not None}

@@ -50,6 +50,10 @@ def list_artifacts(biz_job_id: str | None = None) -> list[dict[str, Any]]:
     return db.list_biz_artifacts(biz_job_id)
 
 
+def get_artifact(artifact_id: str) -> dict[str, Any] | None:
+    return db.get_biz_artifact(artifact_id)
+
+
 def create_event(biz_job_id: str | None, event_type: str, message: str | None = None, node_id: str | None = None) -> None:
     db.create_biz_event(biz_job_id, event_type, message, node_id)
 

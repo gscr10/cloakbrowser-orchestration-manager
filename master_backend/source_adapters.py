@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .json_sources import load_items
+from .feishu_openapi import FeishuBitableClient
 
 
 class InfraSource(Protocol):
@@ -44,11 +45,14 @@ class LocalJsonSource:
 class FeishuOpenApiSource:
     name = "feishu_openapi"
 
+    def __init__(self, client: FeishuBitableClient | None = None) -> None:
+        self.client = client or FeishuBitableClient()
+
     def list_workers(self) -> list[dict[str, Any]]:
-        raise NotImplementedError("Feishu OpenAPI infra source is not configured yet")
+        return self.client.list_infra_workers()
 
     def list_jobs(self) -> list[dict[str, Any]]:
-        raise NotImplementedError("Feishu OpenAPI biz source is not configured yet")
+        return self.client.list_biz_jobs()
 
 
 class NoopWriteBackSink:

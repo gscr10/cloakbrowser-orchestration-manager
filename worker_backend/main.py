@@ -602,6 +602,17 @@ async def list_automation_templates():
     return {"templates": list_templates()}
 
 
+@app.get("/api/artifacts/{filename}")
+async def get_artifact(filename: str):
+    safe_name = Path(filename).name
+    if safe_name != filename:
+        raise HTTPException(status_code=400, detail="Invalid artifact name")
+    path = Path("/data/artifacts") / safe_name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return FileResponse(path)
+
+
 @app.post("/api/scheduler/tick", response_model=SchedulerStatusResponse)
 async def scheduler_tick():
     try:

@@ -261,6 +261,38 @@ def test_master_local_json_nol_native_login_schedule(master_app_client: TestClie
     assert task["payload"]["biz_params"]["fingerprint_seed"] == 7293841
 
 
+def test_master_biz_outputs_redact_password(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    jobs_path = tmp_path / "biz_tasks.json"
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "job_key": "nol-login-secret",
+                        "source_record_id": "rec-secret",
+                        "script_key": "nol_native_login",
+                        "script_version": "v1",
+                        "account": "demo@example.com",
+                        "target_url": "https://world.nol.com/en/auth-web/login",
+                        "params": {"password": "real-secret"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(biz_sync, "BIZ_TASKS_PATH", jobs_path)
+
+    sync = master_app_client.post("/api/master/biz/sync", json={"schedule": False})
+    assert sync.status_code == 200
+    assert sync.json()["jobs"][0]["params"]["password"] == "***"
+    assert sync.json()["jobs"][0]["input_snapshot"]["params"]["password"] == "***"
+
+    jobs = master_app_client.get("/api/master/biz/jobs")
+    assert jobs.status_code == 200
+    assert jobs.json()[0]["params"]["password"] == "***"
+
+
 def test_master_biz_resync_preserves_running_state(master_app_client: TestClient, tmp_path: Path, monkeypatch):
     workers_path = tmp_path / "infra_workers.json"
     workers_path.write_text(
@@ -787,6 +819,24 @@ def test_master_success_report_persists_artifacts_and_writeback_event(master_app
     assert any(event["event_type"] == "biz_writeback_skipped" for event in events)
 
 
+def test_master_downloads_local_biz_artifact(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    from master_backend import biz_repository
+    from master_backend import main as master_main
+
+    artifact_root = tmp_path / "artifacts"
+    artifact_root.mkdir()
+    artifact_file = artifact_root / "shot.png"
+    artifact_file.write_bytes(b"png-bytes")
+    monkeypatch.setattr(master_main, "ARTIFACT_ROOT", artifact_root)
+
+    artifact = biz_repository.create_artifact(None, None, "screenshot", str(artifact_file), {})
+
+    resp = master_app_client.get(f"/api/master/biz/artifacts/{artifact['id']}/download")
+
+    assert resp.status_code == 200
+    assert resp.content == b"png-bytes"
+
+
 def test_master_external_cdp_auto_fills_profile_id_on_pull(master_app_client: TestClient, monkeypatch):
     master_app_client.post(
         "/api/master/nodes/register",
@@ -1029,6 +1079,32 @@ def test_master_sources_expose_feishu_contract(master_app_client: TestClient, mo
     assert "FEISHU_APP_ID" in feishu_source["config"]["missing_env"]
     assert feishu_source["config"]["contract"]["idempotency"] == "source_record_id + run_generation"
     assert feishu_sink["ready"] is False
+
+
+def test_feishu_record_mapping_coerces_bitable_fields():
+    from master_backend import feishu_contract
+    from master_backend.feishu_openapi import map_record
+
+    record = {
+        "record_id": "rec-123",
+        "fields": {
+            "node_id": [{"text": "worker-a"}],
+            "host": "10.0.0.10",
+            "ssh_port": "2222",
+            "enabled": "true",
+            "tags": "kr,ticket",
+            "max_profiles": 8,
+        },
+    }
+
+    mapped = map_record(record, feishu_contract.INFRA_FIELD_MAPPING)
+
+    assert mapped["source"] == "feishu_openapi"
+    assert mapped["source_record_id"] == "rec-123"
+    assert mapped["node_id"] == "worker-a"
+    assert mapped["ssh_port"] == 2222
+    assert mapped["enabled"] is True
+    assert mapped["tags"] == ["kr", "ticket"]
 
 
 def test_master_task_priority_and_cancel_requeue(master_app_client: TestClient):

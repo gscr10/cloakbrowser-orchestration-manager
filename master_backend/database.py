@@ -895,6 +895,16 @@ def list_biz_artifacts(biz_job_id: str | None = None) -> list[dict[str, Any]]:
         return out
 
 
+def get_biz_artifact(artifact_id: str) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM biz_artifacts WHERE id = ?", (artifact_id,)).fetchone()
+        if not row:
+            return None
+        artifact = dict(row)
+        artifact["metadata"] = _json_dict(artifact.pop("metadata_json", None))
+        return artifact
+
+
 def create_biz_event(biz_job_id: str | None, event_type: str, message: str | None = None, node_id: str | None = None) -> None:
     with get_db() as conn:
         conn.execute(
