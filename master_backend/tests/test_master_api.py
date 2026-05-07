@@ -627,6 +627,64 @@ def test_master_create_pull_report_task(master_app_client: TestClient):
     assert success.json()["status"] == "success"
 
 
+def test_master_create_tasks_balances_queued_reservations(master_app_client: TestClient):
+    for node_id in ["worker-a", "worker-b"]:
+        master_app_client.post(
+            "/api/master/nodes/register",
+            json={"node_id": node_id, "hostname": f"{node_id}.local", "max_profiles": 10},
+        )
+        master_app_client.post(
+            "/api/master/nodes/heartbeat",
+            json={"node_id": node_id, "running_profiles": 0, "status": "online"},
+        )
+
+    created = [
+        master_app_client.post(
+            "/api/master/tasks",
+            json={"authorized_target": "balanced batch", "task_type": "open_url", "url": f"https://example.com/{index}"},
+        ).json()
+        for index in range(6)
+    ]
+
+    counts = {node_id: len([task for task in created if task["target_node_id"] == node_id]) for node_id in ["worker-a", "worker-b"]}
+    assert counts == {"worker-a": 3, "worker-b": 3}
+
+
+def test_infra_scheduler_balances_queued_reservations(master_app_client: TestClient):
+    from master_backend import database as db
+    from master_backend import infra_services
+
+    for node_id in ["worker-a", "worker-b"]:
+        master_app_client.post(
+            "/api/master/nodes/register",
+            json={
+                "node_id": node_id,
+                "hostname": f"{node_id}.local",
+                "max_profiles": 10,
+                "tags": ["ticket"],
+                "capabilities": [{"script_key": "open_url", "script_version": "v1"}],
+            },
+        )
+        master_app_client.post(
+            "/api/master/nodes/heartbeat",
+            json={"node_id": node_id, "running_profiles": 0, "status": "online"},
+        )
+
+    first = infra_services.find_available_worker(worker_tags=["ticket"], required_capabilities=[{"script_key": "open_url", "script_version": "v1"}])
+    assert first is not None
+    db.create_master_task(
+        profile_id=None,
+        authorized_target="reserved",
+        task_type="automation_script",
+        payload={"task_type": "automation_script", "script_key": "open_url", "script_version": "v1"},
+        target_node_id=first["node_id"],
+    )
+
+    second = infra_services.find_available_worker(worker_tags=["ticket"], required_capabilities=[{"script_key": "open_url", "script_version": "v1"}])
+    assert second is not None
+    assert second["node_id"] != first["node_id"]
+
+
 def test_master_report_dispatch_mismatch(master_app_client: TestClient):
     master_app_client.post(
         "/api/master/nodes/register",
@@ -1089,6 +1147,7 @@ def test_master_provider_and_provision_dry_run(master_app_client: TestClient, tm
     reserved_provider = master_app_client.put("/api/master/providers/active", json={"provider": "feishu_openapi"})
     assert reserved_provider.status_code == 422
     assert "not configured yet" in reserved_provider.json()["detail"]
+    assert "FEISHU_APP_ID" in reserved_provider.json()["detail"]
 
     provision = master_app_client.post("/api/master/provision/run", json={"dry_run": True})
     assert provision.status_code == 200
@@ -1268,6 +1327,7 @@ def test_feishu_smoke_reports_missing_config(master_app_client: TestClient, monk
     assert smoke.status_code == 200
     assert smoke.json()["ready"] is False
     assert "FEISHU_APP_ID" in smoke.json()["missing_env"]
+    assert "missing env" in smoke.json()["message"]
 
 
 def test_feishu_record_mapping_coerces_bitable_fields():
@@ -1489,7 +1549,7 @@ def test_master_provision_non_dry_run_uses_command_templates(master_app_client: 
     monkeypatch.setattr(
         master_control,
         "verify_node_registered",
-        lambda node_id, min_heartbeat_after, wait_seconds, interval_seconds: (True, "verified"),
+        lambda *args, **kwargs: (True, "verified"),
     )
 
     set_provider = master_app_client.put("/api/master/providers/active", json={"provider": "static"})
@@ -1546,18 +1606,134 @@ def test_master_provision_default_start_command_sets_public_worker_api(master_ap
     cmd = captured["cmd"]
     assert isinstance(cmd, list)
     remote_cmd = cmd[-1]
-    assert (
-        'DOCKER="docker"; docker ps >/dev/null 2>&1 || DOCKER="sudo -n docker"; '
-        "$DOCKER --version >/dev/null 2>&1"
-    ) in remote_cmd
+    assert "ensure_docker()" in remote_cmd
+    assert "sudo -n docker ps" in remote_cmd
+    assert "ensure_owned_dir /opt/cloak-manager-worker/config" in remote_cmd
     assert "$DOCKER pull ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest" in remote_cmd
     assert "$DOCKER rm -f cloak-manager-worker" in remote_cmd
     assert "$DOCKER run -d --name cloak-manager-worker" in remote_cmd
     assert "docker run -d --name cloak-manager-worker" not in remote_cmd
     assert "--shm-size=512m" in remote_cmd
+    assert "-v /opt/cloak-manager-worker/config:/config:ro" in remote_cmd
     assert "-e MASTER_BASE_URL=http://198.51.100.20:8080" in remote_cmd
     assert "-e WORKER_API_BASE=http://203.0.113.10:8080" in remote_cmd
     assert "MAX_RUNNING_PROFILES" not in remote_cmd
+
+
+def test_master_provision_github_main_mode_is_aws_sudo_aware(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    server_list = tmp_path / "servers.json"
+    server_list.write_text(
+        json.dumps(
+            {
+                "servers": [
+                    {
+                        "node_id": "worker-aws",
+                        "host": "203.0.113.20",
+                        "username": "ec2-user",
+                        "max_profiles": 2,
+                        "tags": ["aws", "ticket"],
+                        "enabled": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    provision_cfg = tmp_path / "provision.json"
+    provision_cfg.write_text(json.dumps({"mode": "github_main_clean_rebuild", "timeout_seconds": 1200}), encoding="utf-8")
+    monkeypatch.setattr(master_control, "SERVER_LIST_PATH", server_list)
+    monkeypatch.setattr(master_control, "PROVISION_CONFIG_PATH", provision_cfg)
+    monkeypatch.setattr(master_control, "PROVISION_MASTER_BASE_URL", "http://198.51.100.20:8080")
+    monkeypatch.setattr(master_control, "PROVISION_WORKER_API_BASE", "http://{host}:8080")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, capture_output, text, check, timeout, env=None):
+        captured["cmd"] = cmd
+        captured["timeout"] = timeout
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(master_control.subprocess, "run", fake_run)
+    monkeypatch.setattr(master_control, "verify_node_registered", lambda *args, **kwargs: (True, "verified"))
+
+    master_app_client.put("/api/master/providers/active", json={"provider": "static"})
+    provision = master_app_client.post("/api/master/provision/run", json={"dry_run": False})
+    assert provision.status_code == 200
+
+    assert captured["timeout"] == 1200
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    assert "ec2-user@203.0.113.20" in cmd
+    remote_cmd = cmd[-1]
+    assert "ensure_git()" in remote_cmd
+    assert "sudo NOPASSWD is required" in remote_cmd
+    assert "sudo -n docker ps" in remote_cmd
+    assert "as_root rm -rf /opt/cloakbrowser-orchestration-manager" in remote_cmd
+    assert "ensure_owned_dir /opt/cloakbrowser-orchestration-manager" in remote_cmd
+    assert "$DOCKER volume rm cloak-manager-data" in remote_cmd
+    assert "git clone --branch main --depth 1 https://github.com/gscr10/cloakbrowser-orchestration-manager.git /opt/cloakbrowser-orchestration-manager" in remote_cmd
+    assert "$DOCKER build --pull -t cloak-manager-worker:main -f Dockerfile ." in remote_cmd
+    assert "-e WORKER_TAGS=aws,ticket" in remote_cmd
+
+
+def test_master_provision_failure_messages_are_classified():
+    assert master_control._classify_provision_failure("PROVISION_ERROR[docker_permission]: denied").startswith("docker permission check failed")
+    assert master_control._classify_provision_failure("PROVISION_ERROR[sudo_nopasswd]: sudo missing").startswith("sudo NOPASSWD check failed")
+    assert master_control._classify_provision_failure("PROVISION_ERROR[git_missing]: git missing").startswith("git missing check failed")
+    assert master_control._classify_provision_failure("PROVISION_ERROR[dir_permission]: /opt denied").startswith("directory permission check failed")
+
+
+def test_master_provision_verify_waits_for_capabilities_and_tags(master_app_client: TestClient):
+    from master_backend import database as db
+    from master_backend import infra_repository
+
+    db.upsert_master_node(
+        node_id="worker-verify",
+        hostname="worker-verify.local",
+        api_base="http://203.0.113.30:8080",
+        tags=["aws"],
+        max_profiles=10,
+        status="online",
+    )
+    infra_repository.upsert_worker(
+        {
+            "node_id": "worker-verify",
+            "source": "static",
+            "source_record_id": "worker-verify",
+            "host": "203.0.113.30",
+            "ssh_user": "ec2-user",
+            "enabled": True,
+            "desired_state": "active",
+            "status": "online",
+            "tags": ["ticket"],
+            "worker_api_base": "http://203.0.113.30:8080",
+        }
+    )
+
+    missing_caps = master_control.verify_node_registered(
+        "worker-verify",
+        None,
+        wait_seconds=1,
+        interval_seconds=0.1,
+        expected_api_base="http://203.0.113.30:8080",
+        expected_tags=["aws", "ticket"],
+        require_capabilities=True,
+    )
+    assert missing_caps[0] is False
+    assert "capabilities" in missing_caps[1]
+
+    infra_repository.replace_capabilities("worker-verify", [{"script_key": "open_url", "script_version": "v1"}])
+    verified = master_control.verify_node_registered(
+        "worker-verify",
+        None,
+        wait_seconds=1,
+        interval_seconds=0.1,
+        expected_api_base="http://203.0.113.30:8080",
+        expected_tags=["aws", "ticket"],
+        require_capabilities=True,
+    )
+    assert verified[0] is True
+    assert "capabilities=1" in verified[1]
 
 
 def test_master_provision_uses_config_file(master_app_client: TestClient, tmp_path: Path, monkeypatch):
@@ -1603,7 +1779,7 @@ def test_master_provision_uses_config_file(master_app_client: TestClient, tmp_pa
     monkeypatch.setattr(
         master_control,
         "verify_node_registered",
-        lambda node_id, min_heartbeat_after, wait_seconds, interval_seconds: (True, "verified"),
+        lambda *args, **kwargs: (True, "verified"),
     )
 
     master_app_client.put("/api/master/providers/active", json={"provider": "static"})
@@ -1644,7 +1820,7 @@ def test_master_provision_non_dry_run_fails_when_registration_not_verified(maste
     monkeypatch.setattr(
         master_control,
         "verify_node_registered",
-        lambda node_id, min_heartbeat_after, wait_seconds, interval_seconds: (False, "no heartbeat"),
+        lambda *args, **kwargs: (False, "no heartbeat"),
     )
 
     master_app_client.put("/api/master/providers/active", json={"provider": "static"})

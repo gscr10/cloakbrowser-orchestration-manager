@@ -82,6 +82,8 @@ export MASTER_PUBLIC_IP=<master-public-ip>
 
 cp config/servers.json.example config/servers.json
 cp config/provision.json.example config/provision.json
+# 如需标准清机并从 GitHub main 在 Worker 侧重新构建：
+# cp config/provision.github-main.json.example config/provision.json
 
 # config/servers.json 里填写 Worker 公网 IP、SSH 用户和端口。
 # max_profiles 只作为 Master 调度容量提示；Worker 容器默认不注入 MAX_RUNNING_PROFILES，
@@ -106,6 +108,8 @@ docker run -d --name cloak-manager-master --restart unless-stopped \
   ghcr.io/gscr10/cloakbrowser-orchestration-manager-master:latest
 ```
 
+如果使用 Feishu OpenAPI provider 或回写，建议把 `FEISHU_*` 放在仅本机保存的 env 文件或部署密钥中，并用 `--env-file <local-env-file>` 传入 Master 容器。可参考 `examples/master-worker/env.local.sample` 的变量名，不要提交真实 secret。
+
 3. 选择静态 Provider，先 dry-run，再真实 provision Worker：
 
 ```bash
@@ -116,7 +120,7 @@ python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" provi
 python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" provision-jobs
 ```
 
-默认 provision 模板会先尝试直接执行 `docker`，失败时自动回退到 `sudo -n docker`。远端用户需要能无交互执行 Docker 或具备无交互 sudo 权限。
+默认 provision 模板会先尝试直接执行 `docker`，失败时自动回退到 `sudo -n docker`，并用 sudo-aware 方式创建/chown `/opt/cloak-manager-worker/config`。远端用户需要能无交互执行 Docker 或具备无交互 sudo 权限；失败信息会区分 Docker 权限、sudo NOPASSWD、git 缺失和 `/opt` 目录权限。
 
 4. 创建任务并人工检查前端：
 
@@ -137,6 +141,18 @@ Worker UI/API:  http://<worker-public-ip>:8080
 ```
 
 更完整的两机部署步骤见 `examples/master-worker/mvp.md`。如果 GHCR package 设置为 private，需要先在服务器上执行 `docker login ghcr.io`。
+
+双 Worker 验收可运行：
+
+```bash
+python3 examples/master-worker/public_e2e.py \
+  --master-url "http://${MASTER_PUBLIC_IP}:8080" \
+  --double-worker-acceptance \
+  --acceptance-task-count 6 \
+  --require-balanced
+```
+
+输出会汇总 6 条任务的 3+3 分配和终态；Feishu 回写验收可追加使用 `--require-feishu-writeback`。
 
 ## 运行时环境变量
 
@@ -484,6 +500,8 @@ flowchart TD
 
 建议先调用 `/api/master/providers/feishu-openapi/validate` 查看缺失配置，再调用 `/api/master/providers/feishu-openapi/smoke` 做真实读取验证。验证通过后，可切换 Provider 为 `feishu_openapi`，也可将 writeback sink 切换为 `feishu_openapi`。
 
+Master 容器常用启动方式是保留 `config/` 只读挂载，再额外用 `--env-file` 注入本地 secret env 文件。`validate-feishu` 会返回缺失的变量名；`smoke-feishu` 会真实读取 infra/biz 表做连通性检查，但不会输出 secret 值。
+
 ### 批量初始化（non dry-run）
 
 `/api/master/provision/run` 在 `dry_run=false` 时会通过 SSH 真实执行远程命令。为减少默认误操作，命令模板可通过环境变量配置：
@@ -496,23 +514,27 @@ flowchart TD
 | `MASTER_PROVISION_VERIFY_INTERVAL_SECONDS` | `2` | 注册心跳校验轮询间隔（秒）。 |
 | `MASTER_NODE_HEARTBEAT_TTL_SECONDS` | `30` | 节点心跳超时阈值，超时节点不会参与任务分配。 |
 | `MASTER_PROVISION_WORKER_IMAGE` | `ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest` | Worker 部署镜像。 |
+| `MASTER_PROVISION_REPO_URL` | `https://github.com/gscr10/cloakbrowser-orchestration-manager.git` | `github_main_clean_rebuild` 模式下用于 clone 的仓库地址。 |
+| `MASTER_PROVISION_REPO_REF` | `main` | `github_main_clean_rebuild` 模式下 checkout 的分支或 tag。 |
+| `MASTER_PROVISION_WORKER_SOURCE_DIR` | `/opt/cloakbrowser-orchestration-manager` | `github_main_clean_rebuild` 模式下的远端源码目录。 |
+| `MASTER_PROVISION_WORKER_CONFIG_DIR` | `/opt/cloak-manager-worker/config` | Worker 远端只读配置目录。 |
 | `MASTER_PROVISION_MASTER_BASE_URL` | `http://host.docker.internal:8080` | Worker 回连 Master 的地址模板值。默认值仅用于本地 Docker 特例；公网多机部署必须设为 `http://<master-ip>:8080`。 |
 | `MASTER_PROVISION_WORKER_API_BASE` | `http://{host}:8080` | Worker 注册给 Master 的 API 地址模板值，支持 `{host}` 等占位符。 |
-| `MASTER_PROVISION_BOOTSTRAP_CMD` | `set -e; mkdir -p /opt/cloak-manager-worker/config; DOCKER="docker"; docker ps ... || DOCKER="sudo -n docker"; $DOCKER pull <worker-image>` | 初始化前置命令。 |
-| `MASTER_PROVISION_START_CMD` | `set -e; DOCKER="docker"; docker ps ... || DOCKER="sudo -n docker"; $DOCKER rm ...; $DOCKER run ...` | 启动 Worker 命令。 |
+| `MASTER_PROVISION_BOOTSTRAP_CMD` | sudo-aware Docker pull 模板 | 初始化前置命令。 |
+| `MASTER_PROVISION_START_CMD` | sudo-aware Docker run 模板 | 启动 Worker 命令。 |
 
-模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`、`{master_base_url}`、`{worker_api_base}`。
+模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`、`{master_base_url}`、`{worker_api_base}`、`{tags_csv}`、`{worker_image}`、`{repo_url}`、`{repo_ref}`、`{source_dir}`、`{config_dir}`。
 
-默认模板会先尝试当前 SSH 用户直接访问 Docker daemon；如果失败，会自动改用 `sudo -n docker`。远端用户需要具备无交互 sudo 权限，否则 non dry-run 会失败并返回远端错误。
+默认模板会先尝试当前 SSH 用户直接访问 Docker daemon；如果失败，会自动改用 `sudo -n docker`。远端用户需要具备无交互 sudo 权限，否则 non dry-run 会失败并返回明确错误。模板还会用 sudo-aware 方式创建/chown `/opt/cloak-manager-worker/config`，便于 `ec2-user` 这类非 root 用户部署。
 默认模板不会向 Worker 容器注入 `MAX_RUNNING_PROFILES`，因此 Worker 使用自身 `auto` 上限（最多 15）并在每次启动 Profile 前做资源压力检查。`servers.json` 中的 `max_profiles` 仅作为 Master 调度容量提示；如果需要硬性限制某台 Worker，可在自定义 `MASTER_PROVISION_START_CMD` 中显式增加 `-e MAX_RUNNING_PROFILES=<n>`。
 
 `host.docker.internal` 只适合 Master/Worker 在本地 Docker 环境互访的调试场景；公网部署应始终显式设置 `MASTER_PROVISION_MASTER_BASE_URL`。
 
-也支持配置文件模式（推荐）：设置 `MASTER_PROVISION_CONFIG_PATH`（默认 `/config/provision.json`），格式可参考 `config/provision.json.example`。当配置文件存在时优先使用配置文件中的 `timeout_seconds`、`max_parallel`、`bootstrap_cmd`、`start_cmd`。
+也支持配置文件模式（推荐）：设置 `MASTER_PROVISION_CONFIG_PATH`（默认 `/config/provision.json`），格式可参考 `config/provision.json.example`。当配置文件存在时优先使用配置文件中的 `timeout_seconds`、`max_parallel`、`bootstrap_cmd`、`start_cmd`。`mode=image` 使用 GHCR 镜像；`mode=github_main_clean_rebuild` 会清理旧 Worker 容器、本地 Worker 镜像、`cloak-manager-data` volume 和远端源码目录，再从 GitHub `main` clone、build、run，示例见 `config/provision.github-main.json.example`。
 
 前端可通过 `GET /api/master/provision/servers` 获取当前 Provider 的服务器清单，并结合 `POST /api/master/provision/run` 实现一键部署。
 
-在 non dry-run 下，Master 会在远程命令执行成功后等待节点注册心跳；若在超时内未收到新心跳，该节点会被标记为初始化失败。
+在 non dry-run 下，Master 会在远程命令执行成功后等待节点注册心跳，并校验 Worker API base、tags 和 capabilities；若在超时内未收到新心跳或能力信息，该节点会被标记为初始化失败。
 
 全局任务在 Worker 回报 `failed` 时会按 `max_retries` 自动重排入队，并增加 `retry_count`。当超过重试上限后，任务才会保持最终失败状态。
 

@@ -1,0 +1,7 @@
+{
+  "mode": "github_main_clean_rebuild",
+  "timeout_seconds": 1200,
+  "max_parallel": 1,
+  "verify_wait_seconds": 60,
+  "verify_interval_seconds": 2
+}

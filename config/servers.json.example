@@ -12,11 +12,11 @@
     {
       "node_id": "worker-b",
       "host": "10.0.0.11",
-      "username": "root",
+      "username": "ec2-user",
       "password": "replace-with-real-password",
       "port": 22,
       "max_profiles": 10,
-      "tags": ["sg", "datacenter"],
+      "tags": ["aws", "ec2-user", "datacenter"],
       "enabled": true
     }
   ]

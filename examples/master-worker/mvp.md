@@ -24,7 +24,15 @@ cp config/servers.json.example config/servers.json
 cp config/provision.json.example config/provision.json
 ```
 
-默认模板会先尝试当前 SSH 用户直接执行 `docker`，失败时自动回退到 `sudo -n docker`。如果 Worker 用户需要 sudo 操作 Docker，请确保它具备无交互 sudo 权限。
+默认 `mode=image` 会拉取 GHCR Worker 镜像并重启容器。模板会先尝试当前 SSH 用户直接执行 `docker`，失败时自动回退到 `sudo -n docker`，并用 sudo-aware 方式创建/chown `/opt/cloak-manager-worker/config`。如果 Worker 用户是 AWS 常见的 `ec2-user`，请确保它能无交互执行 Docker 或具备 sudo NOPASSWD；失败信息会区分 Docker 权限、sudo NOPASSWD、git 缺失和目录权限。
+
+如果要做标准清机并从 GitHub `main` 全新构建 Worker：
+
+```bash
+cp config/provision.github-main.json.example config/provision.json
+```
+
+该模式会清理旧 `cloak-manager-worker` 容器、本地 Worker 镜像、`cloak-manager-data` volume 和 `/opt/cloakbrowser-orchestration-manager` 源码目录，然后 clone `main`、`docker build`、`docker run`。这是验收/重建入口，不建议在需要保留 Worker 本地运行状态时使用。
 
 公网部署必须明确这三个地址：
 
@@ -55,6 +63,8 @@ docker run -d --name cloak-manager-master --restart unless-stopped \
   -e MASTER_PROVISION_WORKER_API_BASE="${MASTER_PROVISION_WORKER_API_BASE}" \
   ghcr.io/gscr10/cloakbrowser-orchestration-manager-master:latest
 ```
+
+Feishu OpenAPI 配置建议通过本机 env 文件或部署密钥传入 Master 容器，例如在上面的 `docker run` 中追加 `--env-file /path/to/master-feishu.env`。env 文件只保存本地，不提交仓库；变量名可参考 `examples/master-worker/env.local.sample`。
 
 确认 Master API 可访问：
 
@@ -89,6 +99,7 @@ DISTRIBUTED_WORKER_ENABLED=true
 MASTER_BASE_URL=http://<master-public-ip>:8080
 WORKER_API_BASE=http://<worker-public-ip>:8080
 WORKER_NODE_ID=<node_id>
+WORKER_TAGS=<comma-separated-tags-from-server-list>
 ```
 
 ## 6. 创建任务并观察执行
@@ -143,7 +154,32 @@ curl --noproxy '*' -fsS -X POST "http://${MASTER_PUBLIC_IP}:8080/api/master/biz/
   -d '{"source":"feishu_openapi","schedule":true}'
 ```
 
+缺配置时 `validate-feishu` 会返回明确的 `missing_env` 列表；`smoke-feishu` 会真实读取 infra/biz 表验证连通性，但不会输出 secret 值。
+
 `biz_tasks` 表中可以用 `params` 字段保存业务脚本参数 JSON，例如 `nol_native_login` 的登录密码、`timezone`、`locale`、`human_config`、`auto_turnstile_timeout` 等。表内的 `source_record_id` 可以作为业务 key 使用；Master 会保留飞书真实 `record_id` 到任务输入快照，并优先用它执行回写，避免业务 key 覆盖飞书行 ID 后出现 `RecordIdNotFound`。
+
+## 9. 双 Worker E2E 验收
+
+两台 Worker 都完成 provision 并在 `cluster` 中在线后，可以用公开 E2E 脚本验证连续 6 条任务是否按 3+3 分配、是否全部进入终态：
+
+```bash
+python3 examples/master-worker/public_e2e.py \
+  --master-url "http://${MASTER_PUBLIC_IP}:8080" \
+  --double-worker-acceptance \
+  --acceptance-task-count 6 \
+  --require-balanced
+```
+
+输出里的 `double_worker_acceptance.created_assignment` 和 `completed_assignment` 应各包含两个 Worker，计数均为 `3`；`terminal_status.success` 应为 `6`。如果本次验收使用 Feishu 业务表调度和回写，再追加：
+
+```bash
+python3 examples/master-worker/public_e2e.py \
+  --master-url "http://${MASTER_PUBLIC_IP}:8080" \
+  --skip-task \
+  --require-feishu-writeback
+```
+
+该检查会确认 active writeback sink 是 `feishu_openapi`、Feishu smoke 成功，并且 Master 记录了 `biz_writeback_success` 事件。
 
 2026-05-07 的公网实测状态：
 

@@ -42,6 +42,90 @@ def _poll_task(master_url: str, task_id: str, timeout_seconds: int) -> dict[str,
     raise RuntimeError(f"task {task_id} did not finish within {timeout_seconds}s")
 
 
+def _poll_tasks(master_url: str, task_ids: list[str], timeout_seconds: int) -> list[dict[str, Any]]:
+    remaining = set(task_ids)
+    completed: dict[str, dict[str, Any]] = {}
+    deadline = time.time() + timeout_seconds
+    while remaining and time.time() < deadline:
+        for task_id in list(remaining):
+            task = _json("GET", master_url, f"/api/master/tasks/{task_id}")
+            status = task.get("status")
+            if status in {"success", "failed", "final_failed", "cancelled"}:
+                completed[task_id] = task
+                remaining.remove(task_id)
+        if remaining:
+            time.sleep(3)
+    if remaining:
+        raise RuntimeError(f"tasks did not finish within {timeout_seconds}s: {sorted(remaining)}")
+    return [completed[task_id] for task_id in task_ids]
+
+
+def _count_by(items: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        value = str(item.get(key) or "unassigned")
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _run_double_worker_acceptance(args: argparse.Namespace, master_url: str) -> dict[str, Any]:
+    created = []
+    for index in range(args.acceptance_task_count):
+        created.append(
+            _json(
+                "POST",
+                master_url,
+                "/api/master/tasks",
+                {
+                    "authorized_target": args.authorized_target,
+                    "task_type": "open_url",
+                    "url": f"{args.url}{'&' if '?' in args.url else '?'}acceptance_task={index + 1}",
+                    "timeout_seconds": args.task_timeout,
+                    "max_retries": 0,
+                },
+                timeout=15,
+            )
+        )
+    created_ids = [item["id"] for item in created]
+    assigned = _count_by(created, "target_node_id")
+    if args.require_balanced:
+        _require(len(assigned) == 2, f"expected exactly 2 assigned workers, got {assigned}")
+        expected_per_worker = args.acceptance_task_count // 2
+        _require(
+            args.acceptance_task_count % 2 == 0 and all(count == expected_per_worker for count in assigned.values()),
+            f"expected balanced worker assignment, got {assigned}",
+        )
+    tasks = _poll_tasks(master_url, created_ids, args.task_timeout)
+    terminal = _count_by(tasks, "status")
+    _require(terminal.get("success", 0) == args.acceptance_task_count, f"not all acceptance tasks succeeded: {terminal}")
+    completed_assignment = _count_by(tasks, "target_node_id")
+    if args.require_balanced:
+        expected_per_worker = args.acceptance_task_count // 2
+        _require(all(count == expected_per_worker for count in completed_assignment.values()), f"expected balanced completed tasks, got {completed_assignment}")
+    return {
+        "created_task_ids": created_ids,
+        "created_assignment": assigned,
+        "terminal_status": terminal,
+        "completed_assignment": completed_assignment,
+    }
+
+
+def _check_feishu_writeback(master_url: str) -> dict[str, Any]:
+    sources = _json("GET", master_url, "/api/master/sources")
+    _require(sources.get("active_sink") == "feishu_openapi", "active writeback sink is not feishu_openapi")
+    smoke = _json("POST", master_url, "/api/master/providers/feishu-openapi/smoke")
+    _require(smoke.get("ready") is True, f"Feishu smoke check failed: {smoke.get('message')}")
+    jobs = _json("GET", master_url, "/api/master/biz/jobs")
+    events = _json("GET", master_url, "/api/master/biz/events")
+    writeback_success = [event for event in events if event.get("event_type") == "biz_writeback_success"]
+    _require(writeback_success, "no biz_writeback_success event found")
+    return {
+        "active_sink": sources.get("active_sink"),
+        "biz_jobs": len(jobs),
+        "writeback_success_events": len(writeback_success),
+    }
+
+
 def _redact_secret(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: ("***" if key.lower() in {"password", "secret", "token"} else _redact_secret(item)) for key, item in value.items()}
@@ -76,7 +160,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         _require(isinstance(worker_profiles, list), "worker profiles endpoint is not healthy")
 
     task = None
-    if not args.skip_task:
+    double_worker_acceptance = None
+    if args.double_worker_acceptance:
+        double_worker_acceptance = _run_double_worker_acceptance(args, master_url)
+    elif not args.skip_task:
         if args.script_key == "nol_native_login":
             _require(bool(args.account), "nol_native_login requires --account or NOL_EMAIL")
             _require(bool(args.password), "nol_native_login requires --password or NOL_PASSWORD")
@@ -131,6 +218,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         task = _poll_task(master_url, created["id"], args.task_timeout)
         _require(task.get("status") == "success", f"task did not succeed: {task.get('status')} {task.get('failure_reason')}")
 
+    feishu_writeback = _check_feishu_writeback(master_url) if args.require_feishu_writeback else None
+
     return {
         "master_url": master_url,
         "worker_url": worker_url,
@@ -138,6 +227,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "infra_workers": len(workers),
         "worker_templates": worker_templates,
         "worker_profiles": len(worker_profiles or []),
+        "double_worker_acceptance": double_worker_acceptance,
+        "feishu_writeback": feishu_writeback,
         "task": _redact_secret(task),
     }
 
@@ -168,6 +259,10 @@ def main() -> int:
     parser.add_argument("--require-login", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--task-timeout", type=int, default=240)
     parser.add_argument("--skip-task", action="store_true")
+    parser.add_argument("--double-worker-acceptance", action="store_true", help="Create and verify a balanced two-worker batch.")
+    parser.add_argument("--acceptance-task-count", type=int, default=6)
+    parser.add_argument("--require-balanced", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--require-feishu-writeback", action="store_true")
     args = parser.parse_args()
     try:
         result = run(args)
