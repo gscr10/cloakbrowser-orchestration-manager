@@ -1096,6 +1096,60 @@ def test_master_writeback_sink_can_be_selected(master_app_client: TestClient, mo
     assert sources.json()["active_sink"] == "noop"
 
 
+def test_feishu_writeback_uses_snapshot_record_id(monkeypatch):
+    from master_backend import source_registry
+
+    calls = []
+
+    class FakeClient:
+        def validate(self):
+            return {"ready": True}
+
+        def update_biz_record(self, record_id, fields):
+            calls.append((record_id, fields))
+            return {"code": 0, "msg": "success"}
+
+    monkeypatch.setattr(source_registry, "FeishuBitableClient", lambda: FakeClient())
+    sink = source_registry.FeishuOpenApiWriteBackSink()
+
+    result = sink.write_biz_status(
+        {
+            "id": "job-1",
+            "source_record_id": "business-key",
+            "input_snapshot": {"feishu_record_id": "rec-1"},
+        },
+        "success",
+        {"result_summary": "ok"},
+    )
+
+    assert result["written"] is True
+    assert calls[0][0] == "rec-1"
+
+
+def test_feishu_biz_sync_preserves_record_id_for_writeback():
+    item = {
+        "source": "feishu_openapi",
+        "feishu_record_id": "rec-real",
+        "source_record_id": "business-key",
+        "job_key": "nol-real",
+        "run_generation": 1,
+        "enabled": True,
+        "status": "pending_schedule",
+        "script_key": "nol_native_login",
+        "script_version": "v1",
+        "account": "demo@example.com",
+        "target_url": "https://world.nol.com/en/auth-web/login",
+        "worker_tags": ["public", "gcp"],
+        "params": {"password": "secret"},
+    }
+
+    normalized = biz_sync.normalize_biz_job(item)
+
+    assert normalized is not None
+    assert normalized["source_record_id"] == "business-key"
+    assert normalized["feishu_record_id"] == "rec-real"
+
+
 def test_feishu_provider_can_drive_dry_run_provision(master_app_client: TestClient, monkeypatch):
     from master_backend import feishu_contract
 

@@ -135,7 +135,8 @@ class FeishuOpenApiWriteBackSink(NoopWriteBackSink):
                 "missing_env": validation["missing_env"],
                 "payload": payload,
             }
-        record_id = job.get("feishu_record_id") or job.get("source_record_id")
+        input_snapshot = job.get("input_snapshot") if isinstance(job.get("input_snapshot"), dict) else {}
+        record_id = job.get("feishu_record_id") or input_snapshot.get("feishu_record_id") or job.get("source_record_id")
         if not record_id:
             return {
                 "sink": self.name,
@@ -147,11 +148,25 @@ class FeishuOpenApiWriteBackSink(NoopWriteBackSink):
             }
         fields = _writeback_fields(job, status, payload)
         response = client.update_biz_record(str(record_id), fields)
+        if response.get("code") not in {None, 0}:
+            return {
+                "sink": self.name,
+                "written": False,
+                "job_id": job.get("id"),
+                "source_record_id": job.get("source_record_id"),
+                "record_id": record_id,
+                "status": status,
+                "fields": fields,
+                "reason": response.get("msg") or "Feishu update failed",
+                "response": response,
+                "payload": payload,
+            }
         return {
             "sink": self.name,
             "written": True,
             "job_id": job.get("id"),
             "source_record_id": job.get("source_record_id"),
+            "record_id": record_id,
             "status": status,
             "fields": fields,
             "response": response,
