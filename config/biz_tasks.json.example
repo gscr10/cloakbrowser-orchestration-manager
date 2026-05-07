@@ -16,7 +16,6 @@
       "max_retries": 1,
       "params": {
         "password": "replace-with-real-password",
-        "fingerprint_seed": 7293841,
         "timezone": "Asia/Shanghai",
         "locale": "zh-CN",
         "minimal_cloak": true,
