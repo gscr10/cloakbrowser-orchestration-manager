@@ -338,15 +338,21 @@ export default function App() {
   };
 
   const setProvider = async (provider) => {
-    if (provider === "feishu_openapi") {
-      setNotice("feishu_openapi 尚未配置，暂不能作为服务器提供方");
-      return;
-    }
     await api("/api/master/providers/active", {
       method: "PUT",
       body: JSON.stringify({ provider })
     });
     setNotice(`已切换提供方：${provider}`);
+    await refreshCore();
+  };
+
+  const setWritebackSink = async (sink) => {
+    const result = await api("/api/master/writeback/active", {
+      method: "PUT",
+      body: JSON.stringify({ sink })
+    });
+    setSourceRegistry((current) => ({ ...current, active_sink: result.active_sink, sinks: result.sinks || current.sinks }));
+    setNotice(`已切换回写目标：${result.active_sink}`);
     await refreshCore();
   };
 
@@ -472,6 +478,7 @@ export default function App() {
           providers={providers}
           provisionServers={provisionServers}
           setProvider={setProvider}
+          setWritebackSink={setWritebackSink}
           validateFeishu={validateFeishu}
           smokeFeishu={smokeFeishu}
           feishuCheck={feishuCheck}
@@ -1053,7 +1060,9 @@ function EventsPage({ infraEvents, bizEvents, taskEvents }) {
   );
 }
 
-function SettingsPage({ providers, provisionServers, setProvider, validateFeishu, smokeFeishu, feishuCheck, feishuSmoke, sourceRegistry }) {
+function SettingsPage({ providers, provisionServers, setProvider, setWritebackSink, validateFeishu, smokeFeishu, feishuCheck, feishuSmoke, sourceRegistry }) {
+  const feishuSourceReady = Boolean((sourceRegistry?.sources || []).find((source) => source.name === "feishu_openapi")?.ready);
+  const activeSink = sourceRegistry?.active_sink || providers?.active_sink || "noop";
   return (
     <div className="page-stack">
       <section className="page-header-card">
@@ -1084,16 +1093,21 @@ function SettingsPage({ providers, provisionServers, setProvider, validateFeishu
         </div>
 
         <div className="panel">
-          <div className="panel-title"><h3>Writeback Sink</h3><span className="muted">业务结果回写目标</span></div>
+          <div className="panel-title"><h3>Writeback Sink</h3><span className="muted">当前：{activeSink}</span></div>
           <table>
-            <thead><tr><th>Sink</th><th>状态</th><th>说明</th></tr></thead>
+            <thead><tr><th>Sink</th><th>状态</th><th>说明</th><th>操作</th></tr></thead>
             <tbody>
-              {(!sourceRegistry?.sinks?.length) && <EmptyRow colSpan={3} />}
+              {(!sourceRegistry?.sinks?.length) && <EmptyRow colSpan={4} />}
               {(sourceRegistry?.sinks || []).map((sink) => (
                 <tr key={sink.name}>
                   <td><b>{sink.name}</b></td>
                   <td><StatusPill value={sink.ready ? "success" : "pending_schedule"} /></td>
                   <td>{sink.message}</td>
+                  <td>
+                    <button className={activeSink === sink.name ? "" : "secondary"} disabled={!sink.ready || activeSink === sink.name} onClick={() => setWritebackSink(sink.name)}>
+                      {activeSink === sink.name ? "当前" : "设为回写"}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1106,10 +1120,10 @@ function SettingsPage({ providers, provisionServers, setProvider, validateFeishu
           <div className="panel-title"><h3>Provider</h3><span className="muted">当前：{providers.active || "-"}</span></div>
           <div className="button-row">
             {providers.providers?.map((name) => {
-              const reserved = name === "feishu_openapi";
+              const feishuUnavailable = name === "feishu_openapi" && !feishuSourceReady;
               return (
-                <button key={name} className={providers.active === name ? "" : "secondary"} onClick={() => setProvider(name)} disabled={reserved} title={reserved ? "feishu_openapi 尚未配置" : undefined}>
-                  {reserved ? `${name}（未实现）` : name}
+                <button key={name} className={providers.active === name ? "" : "secondary"} onClick={() => setProvider(name)} disabled={feishuUnavailable} title={feishuUnavailable ? "feishu_openapi 尚未配置" : undefined}>
+                  {feishuUnavailable ? `${name}（未就绪）` : name}
                 </button>
               );
             })}

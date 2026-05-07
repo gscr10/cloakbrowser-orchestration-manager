@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import database as db
 from . import feishu_contract
 from .feishu_openapi import FeishuBitableClient
 from .source_adapters import FeishuOpenApiSource, LocalJsonSource, NoopWriteBackSink, WriteBackSink
@@ -13,6 +14,7 @@ from .source_adapters import FeishuOpenApiSource, LocalJsonSource, NoopWriteBack
 DEFAULT_INFRA_PATH = Path(os.environ.get("MASTER_INFRA_WORKERS_PATH", "/config/infra_workers.json"))
 DEFAULT_BIZ_PATH = Path(os.environ.get("MASTER_BIZ_TASKS_PATH", "/config/biz_tasks.json"))
 DEFAULT_WRITEBACK_SINK = os.environ.get("MASTER_WRITEBACK_SINK", "noop")
+ACTIVE_WRITEBACK_SINK_KEY = "master.writeback_sink"
 
 
 @dataclass(frozen=True)
@@ -73,6 +75,21 @@ def list_sinks() -> list[dict[str, Any]]:
             config={"missing_env": feishu["missing_env"], "contract": feishu["contract"]},
         ).__dict__,
     ]
+
+
+def get_active_writeback_sink_name() -> str:
+    return db.get_master_setting(ACTIVE_WRITEBACK_SINK_KEY) or DEFAULT_WRITEBACK_SINK
+
+
+def set_active_writeback_sink_name(name: str) -> str:
+    if name == "feishu_openapi":
+        validation = feishu_contract.validate_config()
+        if not validation["ready"]:
+            raise ValueError(validation["message"])
+    elif name != "noop":
+        raise ValueError(f"unsupported write-back sink: {name}")
+    db.set_master_setting(ACTIVE_WRITEBACK_SINK_KEY, name)
+    return name
 
 
 def build_local_json_source(
@@ -143,7 +160,7 @@ class FeishuOpenApiWriteBackSink(NoopWriteBackSink):
 
 
 def get_writeback_sink(name: str | None = None) -> WriteBackSink:
-    selected = name or DEFAULT_WRITEBACK_SINK
+    selected = name or get_active_writeback_sink_name()
     if selected == "noop":
         return NoopWriteBackSink()
     if selected == "feishu_openapi":

@@ -283,7 +283,8 @@ python3 -m worker_backend.cli scheduler tick
 | `POST` | `/api/config/import` | 导入 `/config` 文件。 |
 | `GET` | `/api/tasks` | 列出调度任务。 |
 | `POST` | `/api/tasks` | 创建队列任务。 |
-| `POST` | `/api/tasks/{task_id}/cancel` | 取消排队中的任务。 |
+| `POST` | `/api/tasks/{task_id}/cancel` | 取消排队或运行中的任务；运行中会停止对应 Profile。 |
+| `POST` | `/api/distributed/tasks/{master_task_id}/cancel` | Master 分布式模式下按全局任务 ID 取消 Worker 本地任务。 |
 | `GET` | `/api/runs` | 列出 Profile 运行记录。 |
 | `GET` | `/api/scheduler/status` | 查询调度器状态。 |
 | `POST` | `/api/scheduler/tick` | 手动执行一次调度 tick。 |
@@ -370,7 +371,7 @@ Worker 端将浏览器生命周期和业务自动化拆开维护：
 - Worker 向 Master 注册并持续心跳上报资源。
 - Master 维护全局任务队列，并将任务分配给目标 Worker。
 - Worker 通过 `pull` 领取任务并上报执行结果。
-- 支持 Provider 抽象：当前可用 `static` 与 `local_json`，并预留 `feishu_openapi` 接口（尚未配置）。
+- 支持 Provider 抽象：当前可用 `static`、`local_json` 与 `feishu_openapi`。其中 `feishu_openapi` 需要完整 `FEISHU_*` 配置后才能启用。
 
 ### 分层架构（非 AI 阶段）
 
@@ -430,10 +431,13 @@ flowchart TD
 | `GET` | `/api/master/tasks/{task_id}` | 查询单个全局任务。 |
 | `GET` | `/api/master/tasks/{task_id}/events` | 查询任务事件时间线。 |
 | `POST` | `/api/master/tasks/pull` | Worker 拉取分配给自己的任务。 |
-| `POST` | `/api/master/tasks/{task_id}/report` | Worker 回报 started/success/failed。 |
+| `POST` | `/api/master/tasks/{task_id}/report` | Worker 回报 started/success/failed/cancelled。 |
 | `GET` | `/api/master/providers` | 查看 Provider 列表与当前激活项。 |
 | `PUT` | `/api/master/providers/active` | 切换当前 Provider。 |
-| `POST` | `/api/master/providers/feishu-openapi/validate` | 预留接口，当前返回未配置。 |
+| `POST` | `/api/master/providers/feishu-openapi/validate` | 检查 Feishu OpenAPI 必需环境变量与字段契约。 |
+| `POST` | `/api/master/providers/feishu-openapi/smoke` | 使用真实 Feishu 配置读取 infra/biz 表，验证 OpenAPI 连通性。 |
+| `GET` | `/api/master/sources` | 查看 infra/biz sources、writeback sinks 与当前 active sink。 |
+| `PUT` | `/api/master/writeback/active` | 切换业务结果回写目标，例如 `noop` 或 `feishu_openapi`。 |
 | `POST` | `/api/master/provision/run` | 按当前 Provider 执行批量或单 Worker 初始化，支持 `node_id`。 |
 | `GET` | `/api/master/provision/jobs` | 列出初始化任务。 |
 | `GET` | `/api/master/provision/jobs/{job_id}` | 查看初始化任务详情。 |
@@ -467,6 +471,18 @@ flowchart TD
   ]
 }
 ```
+
+### Feishu OpenAPI Provider 与回写
+
+当以下环境变量都配置后，可以将 `feishu_openapi` 同时用于 infra sync、biz sync、provision Provider 和业务结果回写：
+
+| 变量 | 作用 |
+| --- | --- |
+| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 获取飞书 tenant access token。 |
+| `FEISHU_INFRA_APP_TOKEN` / `FEISHU_INFRA_TABLE_ID` | 读取基础设施 Worker 表。 |
+| `FEISHU_BIZ_APP_TOKEN` / `FEISHU_BIZ_TABLE_ID` | 读取业务任务表并回写业务结果。 |
+
+建议先调用 `/api/master/providers/feishu-openapi/validate` 查看缺失配置，再调用 `/api/master/providers/feishu-openapi/smoke` 做真实读取验证。验证通过后，可切换 Provider 为 `feishu_openapi`，也可将 writeback sink 切换为 `feishu_openapi`。
 
 ### 批量初始化（non dry-run）
 
@@ -511,9 +527,14 @@ python3 -m master_backend.cli cluster
 python3 -m master_backend.cli nodes
 python3 -m master_backend.cli providers
 python3 -m master_backend.cli set-provider static
+python3 -m master_backend.cli sources
+python3 -m master_backend.cli validate-feishu
+python3 -m master_backend.cli set-writeback-sink noop
 python3 -m master_backend.cli create-task --authorized-target "internal test app" --task-type open_url
 python3 -m master_backend.cli task <task-id>
 python3 -m master_backend.cli task-events <task-id>
+python3 -m master_backend.cli cancel-task <task-id>
+python3 -m master_backend.cli requeue-task <task-id>
 python3 -m master_backend.cli provision-run --dry-run
 python3 -m master_backend.cli provision-jobs
 python3 -m master_backend.cli provision-job <job-id>
