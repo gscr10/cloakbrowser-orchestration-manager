@@ -71,7 +71,7 @@ python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" provi
 python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" provision-jobs
 ```
 
-`feishu_cli` 目前只是预留 Provider，公网主流程使用 `static`。
+公网主流程可以先使用 `static`。当 Master 容器配置了 `FEISHU_*` 环境变量后，也可以切换到 `feishu_openapi`，由飞书多维表格驱动 infra sync、biz sync 和业务结果回写。
 
 ## 5. Provision Worker
 
@@ -115,6 +115,50 @@ Worker UI/API:  http://<worker-public-ip>:8080
 
 VNC 通过 Worker 的 `8080` WebSocket 代理访问，不需要额外开放 KasmVNC 内部的 `6100+` 端口。打开 Worker UI 后启动一个 `headless=false` 的 Profile，即可在 Worker 前端里观察浏览器窗口。
 
+## 8. Feishu OpenAPI 实战联调
+
+Master 容器需要配置以下环境变量：
+
+```bash
+-e FEISHU_APP_ID=<feishu-app-id>
+-e FEISHU_APP_SECRET=<feishu-app-secret>
+-e FEISHU_INFRA_APP_TOKEN=<base-token>
+-e FEISHU_INFRA_TABLE_ID=<infra-workers-table-id>
+-e FEISHU_BIZ_APP_TOKEN=<base-token>
+-e FEISHU_BIZ_TABLE_ID=<biz-tasks-table-id>
+```
+
+联调顺序：
+
+```bash
+python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" validate-feishu
+python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" smoke-feishu
+python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" set-writeback-sink feishu_openapi
+python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" set-provider feishu_openapi
+curl --noproxy '*' -fsS -X POST "http://${MASTER_PUBLIC_IP}:8080/api/master/infra/sync" \
+  -H 'Content-Type: application/json' \
+  -d '{"source":"feishu_openapi"}'
+curl --noproxy '*' -fsS -X POST "http://${MASTER_PUBLIC_IP}:8080/api/master/biz/sync" \
+  -H 'Content-Type: application/json' \
+  -d '{"source":"feishu_openapi","schedule":true}'
+```
+
+`biz_tasks` 表中可以用 `params` 字段保存业务脚本参数 JSON，例如 `nol_native_login` 的登录密码、`timezone`、`locale`、`human_config`、`auto_turnstile_timeout` 等。表内的 `source_record_id` 可以作为业务 key 使用；Master 会保留飞书真实 `record_id` 到任务输入快照，并优先用它执行回写，避免业务 key 覆盖飞书行 ID 后出现 `RecordIdNotFound`。
+
+2026-05-07 的公网实测状态：
+
+```text
+Master: 35.220.224.41:8080
+Worker: 34.96.144.251:8080
+Worker node_id: worker-gcp
+Feishu infra sync: success
+Feishu biz sync + schedule: success
+nol_native_login: success, turnstile=true, login=true, webdriver=false
+Feishu writeback: success
+```
+
+当前远端 Master 曾用本地改动热更新为 `cloak-manager-master:feishu-local` 容器。正式交付前建议基于已提交代码重新构建镜像并替换该容器，避免长期依赖手工容器内文件覆盖。
+
 ## 附录：手动启动 Worker
 
 如果暂时不通过 Master provision，也可以在 Worker 机器上手动启动：
@@ -135,3 +179,4 @@ docker run -d --name cloak-manager-worker --restart unless-stopped \
   -e WORKER_NODE_ID=worker-a \
   ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest
 ```
+

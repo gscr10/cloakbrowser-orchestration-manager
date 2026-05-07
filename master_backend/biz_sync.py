@@ -50,6 +50,8 @@ def normalize_biz_job(item: dict[str, Any]) -> dict[str, Any] | None:
         "max_retries": _int_with_default(item.get("max_retries"), 1),
         "params": item.get("params_json") or item.get("params") or {},
     }
+    if item.get("feishu_record_id"):
+        normalized["feishu_record_id"] = item["feishu_record_id"]
     if "assigned_worker" in item:
         normalized["assigned_worker"] = item.get("assigned_worker")
     if "profile_id" in item:
