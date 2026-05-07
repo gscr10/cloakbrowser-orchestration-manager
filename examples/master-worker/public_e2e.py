@@ -83,7 +83,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         biz_params: dict[str, Any] = {
             "account": args.account,
             "password": args.password,
-            "fingerprint_seed": args.fingerprint_seed,
             "timezone": args.timezone,
             "locale": args.locale,
             "minimal_cloak": args.minimal_cloak,
@@ -100,6 +99,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "turnstile_page_attempts": args.turnstile_page_attempts,
             "require_login": args.require_login,
         }
+        if args.fingerprint_seed is not None:
+            biz_params["fingerprint_seed"] = args.fingerprint_seed
         if args.backend:
             biz_params["backend"] = args.backend
         payload = {
@@ -151,7 +152,13 @@ def main() -> int:
     parser.add_argument("--script-version", default="v1")
     parser.add_argument("--account", default=os.environ.get("NOL_EMAIL", ""))
     parser.add_argument("--password", default=os.environ.get("NOL_PASSWORD", ""))
-    parser.add_argument("--fingerprint-seed", type=int, default=int(os.environ.get("FINGERPRINT_SEED", "7293841")))
+    env_fingerprint_seed = os.environ.get("FINGERPRINT_SEED")
+    parser.add_argument(
+        "--fingerprint-seed",
+        type=int,
+        default=int(env_fingerprint_seed) if env_fingerprint_seed else None,
+        help="Optional fixed fingerprint seed. Omit for a random seed per new profile.",
+    )
     parser.add_argument("--timezone", default=os.environ.get("NOL_TIMEZONE", "Asia/Shanghai"))
     parser.add_argument("--locale", default=os.environ.get("NOL_LOCALE", "zh-CN"))
     parser.add_argument("--backend", default=os.environ.get("CLOAK_BACKEND"))
