@@ -3,76 +3,50 @@
 from __future__ import annotations
 
 import datetime as dt
-import hmac
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
-from http.cookies import SimpleCookie
 from pathlib import Path
+from urllib.parse import urlparse
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from starlette.types import ASGIApp, Receive, Scope, Send
 
+from . import architecture
+from . import biz_repository
+from . import biz_services
+from . import biz_sync
+from . import biz_validation
 from . import database as db
+from . import feishu_contract
+from . import infra_reconciler
+from . import infra_repository
+from . import infra_services
+from . import infra_sync
 from . import master_control
+from . import redaction
+from . import source_registry
 from .models import (
+    MasterInfraReconcileRequest,
+    MasterInfraSyncRequest,
     MasterNodeHeartbeatRequest,
     MasterNodeRegisterRequest,
     MasterProviderUpdateRequest,
     MasterProvisionRunRequest,
+    MasterStuckTaskRecoveryRequest,
+    MasterSyncRequest,
     MasterTaskCreateRequest,
     MasterTaskPullRequest,
     MasterTaskReportRequest,
+    MasterWritebackSinkUpdateRequest,
 )
 
 logger = logging.getLogger("cloakbrowser.master")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-
-AUTH_TOKEN: str | None = os.environ.get("AUTH_TOKEN") or None
-_AUTH_EXEMPT = frozenset({"/api/status"})
-
-
-def _check_auth(scope: Scope) -> bool:
-    for key, val in scope.get("headers", []):
-        if key == b"authorization":
-            auth_value = val.decode()
-            if auth_value.startswith("Bearer "):
-                token = auth_value[7:]
-                if token and AUTH_TOKEN and hmac.compare_digest(token, AUTH_TOKEN):
-                    return True
-            break
-    for key, val in scope.get("headers", []):
-        if key == b"cookie":
-            cookies = SimpleCookie()
-            cookies.load(val.decode())
-            if "auth_token" in cookies:
-                cookie_val = cookies["auth_token"].value
-                if cookie_val and AUTH_TOKEN and hmac.compare_digest(cookie_val, AUTH_TOKEN):
-                    return True
-            break
-    return False
-
-
-class AuthMiddleware:
-    def __init__(self, app: ASGIApp):
-        self.app = app
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send):
-        if not AUTH_TOKEN or scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-        path = scope["path"]
-        if path in _AUTH_EXEMPT or not path.startswith("/api/"):
-            await self.app(scope, receive, send)
-            return
-        if _check_auth(scope):
-            await self.app(scope, receive, send)
-            return
-        response = JSONResponse({"detail": "Unauthorized"}, status_code=401)
-        await response(scope, receive, send)
 
 
 @asynccontextmanager
@@ -83,7 +57,70 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="CloakBrowser Master API", lifespan=lifespan)
-app.add_middleware(AuthMiddleware)
+
+ARTIFACT_ROOT = Path(os.environ.get("MASTER_ARTIFACT_ROOT", "/data/artifacts"))
+
+
+def _safe_local_artifact_path(uri: str) -> Path | None:
+    parsed = urlparse(uri)
+    raw_path = parsed.path if parsed.scheme == "file" else uri if not parsed.scheme else ""
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = ARTIFACT_ROOT / path
+    try:
+        resolved = path.resolve()
+        root = ARTIFACT_ROOT.resolve()
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    return resolved if resolved.is_file() else None
+
+
+async def _artifact_response(artifact: dict[str, object]) -> Response:
+    uri = str(artifact.get("uri") or "")
+    local_path = _safe_local_artifact_path(uri)
+    if local_path:
+        return FileResponse(local_path)
+
+    run_id = artifact.get("run_id")
+    run = db.get_biz_job_run(str(run_id)) if run_id else None
+    node = db.get_master_node(str(run.get("node_id"))) if run and run.get("node_id") else None
+    api_base = (node or {}).get("api_base")
+    filename = Path(urlparse(uri).path or uri).name
+    if not api_base or not filename:
+        raise HTTPException(status_code=404, detail="Artifact file is not available through Master")
+    try:
+        async with httpx.AsyncClient(base_url=str(api_base).rstrip("/"), timeout=20.0) as client:
+            resp = await client.get(f"/api/artifacts/{filename}")
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=exc.response.status_code, detail="Worker artifact is not available")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to proxy worker artifact: {exc}")
+    media_type = resp.headers.get("content-type") or "application/octet-stream"
+    return Response(content=resp.content, media_type=media_type)
+
+
+async def _request_worker_task_cancel(task: dict[str, object]) -> dict[str, object] | None:
+    node_id = task.get("target_node_id")
+    if not node_id:
+        return None
+    node = db.get_master_node(str(node_id))
+    api_base = (node or {}).get("api_base")
+    if not api_base:
+        return None
+    try:
+        async with httpx.AsyncClient(base_url=str(api_base).rstrip("/"), timeout=10.0) as client:
+            resp = await client.post(f"/api/distributed/tasks/{task['id']}/cancel")
+            if resp.status_code == 404:
+                return {"ok": False, "status_code": 404, "message": "worker local task not found"}
+            resp.raise_for_status()
+            return {"ok": True, "task": resp.json()}
+    except Exception as exc:
+        logger.warning("Failed to cancel worker task %s on %s: %s", task.get("id"), node_id, exc)
+        return {"ok": False, "message": str(exc)}
 
 MASTER_FRONTEND_DIR = Path(__file__).parent.parent / "master-frontend" / "dist"
 if MASTER_FRONTEND_DIR.exists():
@@ -103,11 +140,19 @@ async def master_register_node(req: MasterNodeRegisterRequest):
         node_id=req.node_id,
         hostname=req.hostname,
         api_base=req.api_base,
-        token=req.token,
+        token=None,
         tags=req.tags,
         max_profiles=req.max_profiles,
         running_profiles=0,
         status="online",
+    )
+    infra_services.record_worker_registration(
+        req.node_id,
+        [cap.model_dump() for cap in req.capabilities],
+        hostname=req.hostname,
+        api_base=req.api_base,
+        tags=req.tags,
+        max_profiles=req.max_profiles,
     )
     return {"node": node}
 
@@ -121,7 +166,7 @@ async def master_node_heartbeat(req: MasterNodeHeartbeatRequest):
         node_id=req.node_id,
         hostname=existing["hostname"],
         api_base=existing.get("api_base"),
-        token=existing.get("token"),
+        token=None,
         tags=existing.get("tags") or [],
         max_profiles=int(existing.get("max_profiles") or 15),
         running_profiles=req.running_profiles,
@@ -129,6 +174,16 @@ async def master_node_heartbeat(req: MasterNodeHeartbeatRequest):
         mem_total_mb=req.mem_total_mb,
         mem_used_mb=req.mem_used_mb,
         status=req.status,
+    )
+    infra_services.record_worker_heartbeat(
+        req.node_id,
+        req.status,
+        req.running_profiles,
+        req.cpu_percent,
+        req.mem_total_mb,
+        req.mem_used_mb,
+        node.get("last_heartbeat_at"),
+        [profile.model_dump() for profile in req.profiles],
     )
     return {"node": node}
 
@@ -171,7 +226,7 @@ async def master_cluster_status():
 
 @app.get("/api/master/tasks")
 async def master_list_tasks():
-    return db.list_master_tasks()
+    return redaction.redact(db.list_master_tasks())
 
 
 @app.get("/api/master/tasks/{task_id}")
@@ -179,7 +234,7 @@ async def master_get_task(task_id: str):
     task = db.get_master_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return task
+    return redaction.redact(task)
 
 
 @app.get("/api/master/tasks/{task_id}/events")
@@ -197,7 +252,7 @@ async def master_create_task(req: MasterTaskCreateRequest):
         payload["url"] = "https://www.baidu.com"
     task = master_control.create_master_task(payload)
     db.create_master_task_event(task["id"], None, "queued", "created by master")
-    return task
+    return redaction.redact(task)
 
 
 @app.post("/api/master/tasks/pull")
@@ -209,6 +264,7 @@ async def master_pull_task(req: MasterTaskPullRequest):
     if not task:
         return {"task": None}
     task = master_control.ensure_task_profile_for_node(task, node)
+    biz_services.mark_task_dispatched(task, req.node_id)
     return {"task": task}
 
 
@@ -221,36 +277,76 @@ async def master_report_task(task_id: str, req: MasterTaskReportRequest):
         raise HTTPException(status_code=409, detail="Task belongs to another node")
     if req.dispatch_id and task.get("dispatch_id") and req.dispatch_id != task.get("dispatch_id"):
         raise HTTPException(status_code=409, detail="dispatch_id mismatch")
+    if task.get("status") == "cancelled" and req.status != "cancelled":
+        db.create_master_task_event(task_id, req.node_id, "report_ignored", f"ignored {req.status} report for cancelled task")
+        return redaction.redact(task)
     mapped = {
         "started": "running",
         "success": "success",
         "failed": "failed",
+        "cancelled": "cancelled",
     }[req.status]
+    payload = task.get("payload") or {}
+    if req.status == "started":
+        biz_services.mark_task_started(task, req.node_id)
     if req.status == "failed":
         retry_count = int(task.get("retry_count") or 0)
         max_retries = int(task.get("max_retries") or 0)
         if retry_count < max_retries:
-            target = master_control.pick_target_node()
-            updated = db.update_master_task(
-                task_id,
-                status="queued",
-                retry_count=retry_count + 1,
-                dispatch_id=None,
-                failure_reason=req.failure_reason,
-                target_node_id=target["node_id"] if target else task.get("target_node_id"),
-            )
+            if payload.get("task_type") == "automation_script":
+                required_capabilities = []
+                if payload.get("script_key"):
+                    required_capabilities.append(
+                        {
+                            "script_key": payload.get("script_key"),
+                            "script_version": payload.get("script_version") or "v1",
+                        }
+                    )
+                target = infra_services.find_available_worker(
+                    worker_tags=payload.get("worker_tags") or [],
+                    required_capabilities=required_capabilities,
+                )
+            else:
+                target = master_control.pick_target_node()
+            retry_fields: dict[str, object | None] = {
+                "status": "queued",
+                "retry_count": retry_count + 1,
+                "dispatch_id": None,
+                "failure_reason": req.failure_reason,
+                "target_node_id": target["node_id"] if target else task.get("target_node_id"),
+            }
+            if payload.get("profile_id"):
+                next_payload = dict(payload)
+                next_payload.pop("profile_id", None)
+                retry_fields["profile_id"] = None
+                retry_fields["payload_json"] = json.dumps(next_payload)
+            updated = db.update_master_task(task_id, **retry_fields)
             db.create_master_task_event(task_id, req.node_id, "retry_scheduled", req.failure_reason)
-            return updated
-    updated = db.update_master_task(task_id, status=mapped, failure_reason=req.failure_reason)
+            biz_services.mark_task_retrying(task, req.node_id, req.failure_reason)
+            return redaction.redact(updated)
+    update_fields = {"status": mapped, "failure_reason": req.failure_reason}
+    if req.result:
+        next_payload = dict(payload)
+        next_payload["result"] = req.result
+        update_fields["payload_json"] = json.dumps(next_payload)
+    updated = db.update_master_task(task_id, **update_fields)
     db.create_master_task_event(task_id, req.node_id, req.status, req.failure_reason)
-    return updated
+    if req.status in {"success", "failed", "cancelled"}:
+        biz_services.mark_task_finished(task, req.node_id, req.status, result=dict(req.result), failure_reason=req.failure_reason)
+    return redaction.redact(updated)
 
 
 @app.get("/api/master/providers")
 async def master_list_providers():
     active = master_control.get_active_provider_name()
     providers = list(master_control.available_providers().keys())
-    return {"active": active, "providers": providers}
+    return {
+        "active": active,
+        "providers": providers,
+        "sources": source_registry.list_sources(),
+        "sinks": source_registry.list_sinks(),
+        "active_sink": source_registry.get_active_writeback_sink_name(),
+    }
 
 
 @app.put("/api/master/providers/active")
@@ -262,21 +358,226 @@ async def master_set_provider(req: MasterProviderUpdateRequest):
     return {"active": active}
 
 
-@app.post("/api/master/providers/feishu-cli/validate")
-async def master_validate_feishu_cli_provider():
+@app.post("/api/master/providers/feishu-openapi/validate")
+async def master_validate_feishu_openapi_provider():
+    return feishu_contract.validate_config()
+
+
+@app.post("/api/master/providers/feishu-openapi/smoke")
+async def master_smoke_feishu_openapi_provider():
+    validation = feishu_contract.validate_config()
+    if not validation["ready"]:
+        return {"ready": False, "message": validation["message"], "missing_env": validation["missing_env"], "contract": validation["contract"]}
+    try:
+        source = source_registry.get_infra_source("feishu_openapi")
+        workers = await run_in_threadpool(source.list_workers)
+        jobs = await run_in_threadpool(source.list_jobs)
+    except Exception as exc:
+        return {"ready": False, "message": f"Feishu OpenAPI request failed: {exc}", "missing_env": [], "contract": validation["contract"]}
     return {
-        "provider": "feishu_cli",
-        "ready": False,
-        "message": "feishu_cli provider is reserved and not implemented yet",
+        "ready": True,
+        "message": "Feishu OpenAPI read smoke succeeded",
+        "infra_workers_count": len(workers),
+        "biz_jobs_count": len(jobs),
+        "writeback_sink": source_registry.get_writeback_sink("feishu_openapi").name,
     }
+
+
+@app.get("/api/master/sources")
+async def master_list_sources():
+    return {
+        "sources": source_registry.list_sources(),
+        "sinks": source_registry.list_sinks(),
+        "active_sink": source_registry.get_active_writeback_sink_name(),
+    }
+
+
+@app.put("/api/master/writeback/active")
+async def master_set_writeback_sink(req: MasterWritebackSinkUpdateRequest):
+    try:
+        active = source_registry.set_active_writeback_sink_name(req.sink)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {"active_sink": active, "sinks": source_registry.list_sinks()}
+
+
+@app.get("/api/master/architecture/summary")
+async def master_architecture_summary():
+    return architecture.architecture_summary()
+
+
+@app.post("/api/master/infra/sync")
+async def master_sync_infra_workers(req: MasterInfraSyncRequest | None = None):
+    try:
+        result = infra_sync.sync_infra_workers(source_name=(req.source if req else "local_json"))
+        result["workers"] = infra_repository.public_worker_views(result.get("workers") or [])
+        return result
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/master/infra/workers")
+async def master_list_infra_workers():
+    return infra_repository.public_worker_views(infra_repository.list_workers())
+
+
+@app.get("/api/master/infra/events")
+async def master_list_infra_events():
+    return infra_repository.list_events()
+
+
+@app.get("/api/master/infra/sync-runs")
+async def master_list_infra_sync_runs():
+    return infra_repository.list_sync_runs()
+
+
+@app.get("/api/master/infra/capabilities")
+async def master_list_infra_capabilities():
+    return infra_repository.list_capabilities()
+
+
+@app.get("/api/master/biz/input-schemas")
+async def master_list_biz_input_schemas():
+    return biz_validation.list_input_schemas()
+
+
+@app.get("/api/master/infra/profiles")
+async def master_list_infra_profiles():
+    return infra_repository.list_profiles()
+
+
+@app.post("/api/master/infra/reconcile")
+async def master_reconcile_infra(req: MasterInfraReconcileRequest):
+    try:
+        return await run_in_threadpool(infra_reconciler.apply_reconcile, dry_run=req.dry_run, node_id=req.node_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/master/biz/sync")
+async def master_sync_biz_jobs(req: MasterSyncRequest):
+    try:
+        result = biz_sync.sync_biz_jobs(source_name=req.source)
+        if req.schedule:
+            scheduled = []
+            for job in result["jobs"]:
+                if job.get("enabled") and not job.get("master_task_id") and job.get("status") != "invalid":
+                    scheduled.append(biz_services.schedule_biz_job(job["id"], infra_services.find_available_worker))
+            result["scheduled"] = scheduled
+        return redaction.redact(result)
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/master/biz/jobs")
+async def master_list_biz_jobs():
+    return redaction.redact(biz_repository.list_jobs())
+
+
+@app.post("/api/master/biz/jobs/{job_id}/schedule")
+async def master_schedule_biz_job(job_id: str):
+    try:
+        return redaction.redact(biz_services.schedule_biz_job(job_id, infra_services.find_available_worker))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@app.post("/api/master/biz/jobs/{job_id}/cancel")
+async def master_cancel_biz_job(job_id: str):
+    try:
+        job = biz_services.cancel_biz_job(job_id, "cancelled by operator")
+        if job.get("master_task_id"):
+            task = db.get_master_task(job["master_task_id"])
+            if task and task.get("status") in {"queued", "dispatched", "running"}:
+                db.update_master_task(task["id"], status="cancelled", failure_reason="cancelled by operator")
+                db.create_master_task_event(task["id"], task.get("target_node_id"), "cancelled", "cancelled by operator")
+        return redaction.redact(job)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/master/biz/jobs/{job_id}/requeue")
+async def master_requeue_biz_job(job_id: str):
+    try:
+        return redaction.redact(biz_services.requeue_biz_job(job_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/master/tasks/recover-stuck")
+async def master_recover_stuck_tasks(req: MasterStuckTaskRecoveryRequest):
+    return redaction.redact(biz_services.recover_stuck_master_tasks(req.older_than_seconds))
+
+
+@app.post("/api/master/tasks/{task_id}/cancel")
+async def master_cancel_task(task_id: str):
+    task = db.get_master_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    worker_cancel = None
+    if task.get("status") in {"dispatched", "running"}:
+        worker_cancel = await _request_worker_task_cancel(task)
+    updated = db.update_master_task(task_id, status="cancelled", failure_reason="cancelled by operator")
+    db.create_master_task_event(task_id, task.get("target_node_id"), "cancelled", "cancelled by operator")
+    if worker_cancel:
+        event_type = "worker_cancel_requested" if worker_cancel.get("ok") else "worker_cancel_failed"
+        db.create_master_task_event(task_id, task.get("target_node_id"), event_type, json.dumps(worker_cancel, ensure_ascii=False))
+    payload = task.get("payload") or {}
+    if payload.get("biz_job_id"):
+        biz_services.cancel_biz_job(payload["biz_job_id"], "cancelled by operator")
+    result = dict(updated or {})
+    if worker_cancel:
+        result["worker_cancel"] = worker_cancel
+    return redaction.redact(result)
+
+
+@app.post("/api/master/tasks/{task_id}/requeue")
+async def master_requeue_task(task_id: str):
+    task = db.get_master_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    updated = db.update_master_task(task_id, status="queued", dispatch_id=None, failure_reason=None)
+    db.create_master_task_event(task_id, task.get("target_node_id"), "requeued", "requeued by operator")
+    return redaction.redact(updated)
+
+
+@app.get("/api/master/biz/events")
+async def master_list_biz_events():
+    return biz_repository.list_events()
+
+
+@app.get("/api/master/biz/runs")
+async def master_list_biz_runs():
+    return redaction.redact(biz_repository.list_runs())
+
+
+@app.get("/api/master/biz/artifacts")
+async def master_list_biz_artifacts():
+    return biz_repository.list_artifacts()
+
+
+@app.get("/api/master/biz/artifacts/{artifact_id}/download")
+async def master_download_biz_artifact(artifact_id: str):
+    artifact = biz_repository.get_artifact(artifact_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return await _artifact_response(artifact)
 
 
 @app.post("/api/master/provision/run")
 async def master_run_provision(req: MasterProvisionRunRequest):
     try:
-        return await run_in_threadpool(master_control.run_provision, dry_run=req.dry_run)
+        return await run_in_threadpool(master_control.run_provision, dry_run=req.dry_run, node_id=req.node_id)
     except NotImplementedError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.get("/api/master/provision/servers")

@@ -49,8 +49,12 @@ def init_db():
                 hardware_concurrency INTEGER,
                 humanize BOOLEAN DEFAULT 0,
                 human_preset TEXT DEFAULT 'default',
+                human_config TEXT DEFAULT '{}',
                 headless BOOLEAN DEFAULT 0,
                 geoip BOOLEAN DEFAULT 0,
+                backend TEXT,
+                stealth_args BOOLEAN DEFAULT 1,
+                minimal_cloak BOOLEAN DEFAULT 0,
                 clipboard_sync BOOLEAN DEFAULT 1,
                 color_scheme TEXT,
                 notes TEXT,
@@ -88,6 +92,7 @@ def init_db():
                 authorized_target TEXT NOT NULL,
                 task_type TEXT NOT NULL,
                 url TEXT,
+                payload_json TEXT NOT NULL DEFAULT '{}',
                 status TEXT NOT NULL,
                 proxy_id TEXT REFERENCES proxy_endpoints(id),
                 run_id TEXT,
@@ -119,6 +124,22 @@ def init_db():
         if "launch_args" not in cols:
             conn.execute("ALTER TABLE profiles ADD COLUMN launch_args TEXT DEFAULT '[]'")
             conn.commit()
+        if "human_config" not in cols:
+            conn.execute("ALTER TABLE profiles ADD COLUMN human_config TEXT DEFAULT '{}'")
+            conn.commit()
+        if "backend" not in cols:
+            conn.execute("ALTER TABLE profiles ADD COLUMN backend TEXT")
+            conn.commit()
+        if "stealth_args" not in cols:
+            conn.execute("ALTER TABLE profiles ADD COLUMN stealth_args BOOLEAN DEFAULT 1")
+            conn.commit()
+        if "minimal_cloak" not in cols:
+            conn.execute("ALTER TABLE profiles ADD COLUMN minimal_cloak BOOLEAN DEFAULT 0")
+            conn.commit()
+        task_cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        if "payload_json" not in task_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}'")
+            conn.commit()
 
 
 def _now() -> str:
@@ -141,10 +162,10 @@ def create_profile(
             """INSERT INTO profiles (
                 id, name, fingerprint_seed, proxy, timezone, locale, platform,
                 user_agent, screen_width, screen_height, gpu_vendor, gpu_renderer,
-                hardware_concurrency, humanize, human_preset, headless, geoip,
-                clipboard_sync, color_scheme, launch_args, notes,
-                user_data_dir, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                hardware_concurrency, humanize, human_preset, human_config, headless,
+                geoip, backend, stealth_args, minimal_cloak, clipboard_sync, color_scheme,
+                launch_args, notes, user_data_dir, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 profile_id, name, seed,
                 fields.get("proxy"),
@@ -159,8 +180,12 @@ def create_profile(
                 fields.get("hardware_concurrency"),
                 fields.get("humanize", False),
                 fields.get("human_preset", "default"),
+                json.dumps(fields.get("human_config") or {}),
                 fields.get("headless", False),
                 fields.get("geoip", False),
+                fields.get("backend"),
+                fields.get("stealth_args", True),
+                fields.get("minimal_cloak", False),
                 fields.get("clipboard_sync", True),
                 fields.get("color_scheme"),
                 json.dumps(fields.get("launch_args") or []),
@@ -185,6 +210,7 @@ def get_profile(profile_id: str) -> dict[str, Any] | None:
             return None
         profile = dict(row)
         profile["launch_args"] = json.loads(profile.get("launch_args") or "[]")
+        profile["human_config"] = json.loads(profile.get("human_config") or "{}")
         tags = conn.execute(
             "SELECT tag, color FROM profile_tags WHERE profile_id = ?",
             (profile_id,),
@@ -200,6 +226,7 @@ def list_profiles() -> list[dict[str, Any]]:
         for row in rows:
             profile = dict(row)
             profile["launch_args"] = json.loads(profile.get("launch_args") or "[]")
+            profile["human_config"] = json.loads(profile.get("human_config") or "{}")
             tags = conn.execute(
                 "SELECT tag, color FROM profile_tags WHERE profile_id = ?",
                 (profile["id"],),
@@ -222,12 +249,15 @@ def update_profile(profile_id: str, **fields: Any) -> dict[str, Any] | None:
     # Pre-serialize launch_args to JSON before the generic update loop
     if "launch_args" in fields:
         fields["launch_args"] = json.dumps(fields["launch_args"] or [])
+    if "human_config" in fields:
+        fields["human_config"] = json.dumps(fields["human_config"] or {})
 
     for col in (
         "name", "fingerprint_seed", "proxy", "timezone", "locale", "platform",
         "user_agent", "screen_width", "screen_height", "gpu_vendor", "gpu_renderer",
-        "hardware_concurrency", "humanize", "human_preset", "headless", "geoip",
-        "clipboard_sync", "color_scheme", "launch_args", "notes",
+        "hardware_concurrency", "humanize", "human_preset", "human_config", "headless",
+        "geoip", "backend", "stealth_args", "minimal_cloak", "clipboard_sync",
+        "color_scheme", "launch_args", "notes",
     ):
         if col in fields:
             update_cols.append(f"{col} = ?")
@@ -380,16 +410,17 @@ def create_task(
     task_type: str,
     timeout_seconds: int,
     url: str | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     task_id = str(uuid.uuid4())
     now = _now()
     with get_db() as conn:
         conn.execute(
             """INSERT INTO tasks (
-                id, profile_id, authorized_target, task_type, url, status,
+                id, profile_id, authorized_target, task_type, url, payload_json, status,
                 timeout_seconds, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (task_id, profile_id, authorized_target, task_type, url, "queued", timeout_seconds, now, now),
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (task_id, profile_id, authorized_target, task_type, url, json.dumps(payload or {}), "queued", timeout_seconds, now, now),
         )
         conn.commit()
     return get_task(task_id)  # type: ignore[return-value]
@@ -398,13 +429,13 @@ def create_task(
 def get_task(task_id: str) -> dict[str, Any] | None:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        return dict(row) if row else None
+        return _task_from_row(row) if row else None
 
 
 def list_tasks() -> list[dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
-        return [dict(row) for row in rows]
+        return [_task_from_row(row) for row in rows]
 
 
 def next_queued_task() -> dict[str, Any] | None:
@@ -412,12 +443,14 @@ def next_queued_task() -> dict[str, Any] | None:
         row = conn.execute(
             "SELECT * FROM tasks WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1"
         ).fetchone()
-        return dict(row) if row else None
+        return _task_from_row(row) if row else None
 
 
 def update_task(task_id: str, **fields: Any) -> dict[str, Any] | None:
     if not fields:
         return get_task(task_id)
+    if "payload" in fields:
+        fields["payload_json"] = json.dumps(fields.pop("payload") or {})
     fields["updated_at"] = _now()
     cols = [f"{key} = ?" for key in fields]
     vals = list(fields.values()) + [task_id]
@@ -425,6 +458,15 @@ def update_task(task_id: str, **fields: Any) -> dict[str, Any] | None:
         conn.execute(f"UPDATE tasks SET {', '.join(cols)} WHERE id = ?", vals)
         conn.commit()
     return get_task(task_id)
+
+
+def _task_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    task = dict(row)
+    try:
+        task["payload"] = json.loads(task.pop("payload_json") or "{}")
+    except json.JSONDecodeError:
+        task["payload"] = {}
+    return task
 
 
 def create_profile_run(

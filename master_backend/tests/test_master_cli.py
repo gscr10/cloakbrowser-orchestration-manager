@@ -63,6 +63,32 @@ def test_master_cli_task_events(monkeypatch):
     assert FakeHttpClient.instances[0].requests == [("GET", "/api/master/tasks/task-1/events", None)]
 
 
+def test_master_cli_cancel_and_requeue_task(monkeypatch):
+    setup_fake_http(monkeypatch)
+    assert cli.main(["cancel-task", "task-1"]) == 0
+    assert cli.main(["requeue-task", "task-1"]) == 0
+    assert FakeHttpClient.instances[0].requests == [("POST", "/api/master/tasks/task-1/cancel", None)]
+    assert FakeHttpClient.instances[1].requests == [("POST", "/api/master/tasks/task-1/requeue", None)]
+
+
+def test_master_cli_sources_and_writeback(monkeypatch):
+    setup_fake_http(monkeypatch)
+    assert cli.main(["sources"]) == 0
+    assert cli.main(["set-writeback-sink", "noop"]) == 0
+    assert FakeHttpClient.instances[0].requests == [("GET", "/api/master/sources", None)]
+    assert FakeHttpClient.instances[1].requests == [("PUT", "/api/master/writeback/active", {"sink": "noop"})]
+
+
+def test_master_cli_feishu_provider_commands(monkeypatch):
+    setup_fake_http(monkeypatch)
+    assert cli.main(["set-provider", "feishu_openapi"]) == 0
+    assert cli.main(["validate-feishu"]) == 0
+    assert cli.main(["smoke-feishu"]) == 0
+    assert FakeHttpClient.instances[0].requests == [("PUT", "/api/master/providers/active", {"provider": "feishu_openapi"})]
+    assert FakeHttpClient.instances[1].requests == [("POST", "/api/master/providers/feishu-openapi/validate", None)]
+    assert FakeHttpClient.instances[2].requests == [("POST", "/api/master/providers/feishu-openapi/smoke", None)]
+
+
 def test_master_cli_provision_job_get(monkeypatch):
     setup_fake_http(monkeypatch)
     code = cli.main(["provision-job", "job-1"])

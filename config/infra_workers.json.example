@@ -1,0 +1,18 @@
+{
+  "workers": [
+    {
+      "node_id": "worker-a",
+      "host": "34.96.144.251",
+      "ssh_user": "root",
+      "ssh_password": "replace-with-real-password",
+      "ssh_port": 22,
+      "enabled": true,
+      "desired_state": "active",
+      "max_profiles": 8,
+      "region": "gcp-asia",
+      "tags": ["kr", "ticket"],
+      "worker_api_base": "http://34.96.144.251:8080",
+      "notes": "Local JSON stand-in for the future Feishu worker table."
+    }
+  ]
+}

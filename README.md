@@ -142,7 +142,6 @@ Worker UI/API:  http://<worker-public-ip>:8080
 
 | 变量 | 默认值 | 作用 |
 | --- | --- | --- |
-| `AUTH_TOKEN` | 未设置 | 可选 Bearer token 和 Web UI 登录 token。未设置时 API 和 UI 默认开放。 |
 | `CONFIG_DIR` | `/config` | 外部配置文件目录。 |
 | `CONFIG_IMPORT_ON_START` | `false` | 为 true 时启动阶段导入 `/config/profiles.json` 和 `/config/proxies.csv`。 |
 | `MAX_RUNNING_PROFILES` | `auto` | 单个服务允许同时运行的 Profile 上限。默认自适应，硬上限为 15；也可以显式设置 1-15 的数字。该限制作用于 UI/API/CLI 手动启动和调度器启动。 |
@@ -210,7 +209,6 @@ python3 -m worker_backend.cli status
 
 ```bash
 export CLOAK_MANAGER_URL=http://localhost:8080
-export CLOAK_MANAGER_TOKEN=your-secret-token
 
 python3 -m worker_backend.cli profiles list
 ```
@@ -219,7 +217,6 @@ python3 -m worker_backend.cli profiles list
 
 ```text
 --base-url http://localhost:8080
---token <token>
 --timeout 30
 --compact
 ```
@@ -286,7 +283,8 @@ python3 -m worker_backend.cli scheduler tick
 | `POST` | `/api/config/import` | 导入 `/config` 文件。 |
 | `GET` | `/api/tasks` | 列出调度任务。 |
 | `POST` | `/api/tasks` | 创建队列任务。 |
-| `POST` | `/api/tasks/{task_id}/cancel` | 取消排队中的任务。 |
+| `POST` | `/api/tasks/{task_id}/cancel` | 取消排队或运行中的任务；运行中会停止对应 Profile。 |
+| `POST` | `/api/distributed/tasks/{master_task_id}/cancel` | Master 分布式模式下按全局任务 ID 取消 Worker 本地任务。 |
 | `GET` | `/api/runs` | 列出 Profile 运行记录。 |
 | `GET` | `/api/scheduler/status` | 查询调度器状态。 |
 | `POST` | `/api/scheduler/tick` | 手动执行一次调度 tick。 |
@@ -340,6 +338,18 @@ await page.goto("https://example.com");
 
 如果需要在 VNC 中看到浏览器窗口，请创建或更新 Profile 为 `headless=false`。`headless=true` 的 Profile 仍可运行并暴露 CDP，但 VNC 不会显示可见浏览器窗口。
 
+### Worker 业务脚本结构
+
+Worker 端将浏览器生命周期和业务自动化拆开维护：
+
+- `worker_backend/browser_manager.py` 只负责 Profile、CloakBrowser、VNC、CDP 端口和资源限制。
+- `worker_backend/automation/runner.py` 负责为一次业务执行创建 `AutomationContext`，默认通过 Playwright CDP 连接已启动的 Profile 并新建 page。
+- `worker_backend/automation/context.py` 是业务脚本稳定依赖面，提供 `page`、`payload`、`params`、`target_url()`、`account()` 和 `artifact_path()`。
+- `worker_backend/automation/registry.py` 负责脚本注册和能力上报。新增脚本时用 `register_template(script_key, version, handler)` 挂载。
+- `worker_backend/automation/scripts/` 放具体业务脚本，例如 `nol_native_login.py`。
+
+业务脚本不直接调用 `cloakbrowser.launch()`，也不管理 Profile 生命周期；它只使用 `AutomationContext.page` 上的 Playwright API 编写业务步骤。对 NOL 这类敏感登录流程，推荐参数是 `minimal_cloak=true`、`humanize=true`、`human_preset=careful`、`use_cdp_automation=true`，并让脚本每次新建 page。
+
 ## 调度器行为
 
 调度器刻意保持轻量，并只面向单机运行：
@@ -361,7 +371,40 @@ await page.goto("https://example.com");
 - Worker 向 Master 注册并持续心跳上报资源。
 - Master 维护全局任务队列，并将任务分配给目标 Worker。
 - Worker 通过 `pull` 领取任务并上报执行结果。
-- 支持 Provider 抽象：当前可用 `static`，并预留 `feishu_cli` 接口（未实现）。
+- 支持 Provider 抽象：当前可用 `static`、`local_json` 与 `feishu_openapi`。其中 `feishu_openapi` 需要完整 `FEISHU_*` 配置后才能启用。
+
+### 分层架构（非 AI 阶段）
+
+当前分布式架构按三层建设，避免把 Worker 部署问题和浏览器业务失败混在一起：
+
+- **基础设施控制面**：Worker 服务器清单、desired state、SSH/Docker provision、注册、心跳、资源、Profile 观测、Worker capabilities 和可调度 Worker 查询。
+- **业务自动化控制面**：业务输入同步、`source_record_id + run_generation` 幂等、输入快照、业务任务状态机、调度请求、业务结果和事件。
+- **Worker 执行运行时**：Profile 管理、浏览器运行、脚本模板 registry、自动化执行、日志/截图/URL/title 等结果回传。
+
+```mermaid
+flowchart TD
+    feishuInfra["飞书基础设施表：服务器清单"] --> infraSync["基础设施同步器"]
+    infraSync --> infraDb["基础设施状态库"]
+    infraDb --> provisionSvc["部署管理：SSH 和 Docker"]
+    infraDb --> monitorSvc["资源监控：心跳、资源、Profile"]
+
+    feishuBiz["飞书业务表：账号和自动化输入"] --> bizSync["业务同步器"]
+    bizSync --> bizDb["业务任务状态库"]
+    bizDb --> bizScheduler["业务调度器"]
+
+    monitorSvc --> scheduleContract["调度契约层"]
+    bizScheduler --> scheduleContract
+    scheduleContract --> workerSelect["选择可用 Worker"]
+
+    provisionSvc --> workerInfra["Worker 基础代理"]
+    workerSelect --> workerRuntime["Worker 自动化运行时"]
+    workerRuntime --> profileRuntime["Profile 浏览器运行"]
+    profileRuntime --> scriptTemplate["自动化脚本模板"]
+    scriptTemplate --> bizResult["业务执行结果"]
+    bizResult --> bizDb
+```
+
+第一版可以用 `config/infra_workers.json.example` 和 `config/biz_tasks.json.example` 模拟飞书表。字段保持 `source_record_id`、`run_generation`、`script_key`、`script_version`、`worker_tags` 等 Feishu OpenAPI 可替换结构；后续接入 Feishu 时只替换同步 adapter，不改变 infra/biz 内部状态机。
 
 若需在 Worker 节点启用自动拉取执行循环，设置：
 
@@ -388,13 +431,25 @@ await page.goto("https://example.com");
 | `GET` | `/api/master/tasks/{task_id}` | 查询单个全局任务。 |
 | `GET` | `/api/master/tasks/{task_id}/events` | 查询任务事件时间线。 |
 | `POST` | `/api/master/tasks/pull` | Worker 拉取分配给自己的任务。 |
-| `POST` | `/api/master/tasks/{task_id}/report` | Worker 回报 started/success/failed。 |
+| `POST` | `/api/master/tasks/{task_id}/report` | Worker 回报 started/success/failed/cancelled。 |
 | `GET` | `/api/master/providers` | 查看 Provider 列表与当前激活项。 |
 | `PUT` | `/api/master/providers/active` | 切换当前 Provider。 |
-| `POST` | `/api/master/providers/feishu-cli/validate` | 预留接口，当前返回未实现。 |
-| `POST` | `/api/master/provision/run` | 按当前 Provider 执行批量初始化。 |
+| `POST` | `/api/master/providers/feishu-openapi/validate` | 检查 Feishu OpenAPI 必需环境变量与字段契约。 |
+| `POST` | `/api/master/providers/feishu-openapi/smoke` | 使用真实 Feishu 配置读取 infra/biz 表，验证 OpenAPI 连通性。 |
+| `GET` | `/api/master/sources` | 查看 infra/biz sources、writeback sinks 与当前 active sink。 |
+| `PUT` | `/api/master/writeback/active` | 切换业务结果回写目标，例如 `noop` 或 `feishu_openapi`。 |
+| `POST` | `/api/master/provision/run` | 按当前 Provider 执行批量或单 Worker 初始化，支持 `node_id`。 |
 | `GET` | `/api/master/provision/jobs` | 列出初始化任务。 |
 | `GET` | `/api/master/provision/jobs/{job_id}` | 查看初始化任务详情。 |
+| `POST` | `/api/master/infra/sync` | 从基础设施数据源同步 Worker 服务器清单。 |
+| `GET` | `/api/master/infra/workers` | 查看基础设施 Worker desired/actual 状态。 |
+| `GET` | `/api/master/infra/capabilities` | 查看 Worker 上报的脚本能力。 |
+| `GET` | `/api/master/infra/profiles` | 查看 Master 汇总的 Worker Profile 运行观测。 |
+| `POST` | `/api/master/biz/sync` | 从业务数据源同步业务任务，可选择同步后调度。 |
+| `GET` | `/api/master/biz/jobs` | 查看内部业务任务状态。 |
+| `GET` | `/api/master/biz/input-schemas` | 查看当前 Master 认可的业务脚本输入 schema。 |
+| `GET` | `/api/master/biz/runs` | 查看业务任务运行记录。 |
+| `GET` | `/api/master/biz/events` | 查看业务事件。 |
 
 ### 静态服务器列表（Provider=static）
 
@@ -417,6 +472,18 @@ await page.goto("https://example.com");
 }
 ```
 
+### Feishu OpenAPI Provider 与回写
+
+当以下环境变量都配置后，可以将 `feishu_openapi` 同时用于 infra sync、biz sync、provision Provider 和业务结果回写：
+
+| 变量 | 作用 |
+| --- | --- |
+| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 获取飞书 tenant access token。 |
+| `FEISHU_INFRA_APP_TOKEN` / `FEISHU_INFRA_TABLE_ID` | 读取基础设施 Worker 表。 |
+| `FEISHU_BIZ_APP_TOKEN` / `FEISHU_BIZ_TABLE_ID` | 读取业务任务表并回写业务结果。 |
+
+建议先调用 `/api/master/providers/feishu-openapi/validate` 查看缺失配置，再调用 `/api/master/providers/feishu-openapi/smoke` 做真实读取验证。验证通过后，可切换 Provider 为 `feishu_openapi`，也可将 writeback sink 切换为 `feishu_openapi`。
+
 ### 批量初始化（non dry-run）
 
 `/api/master/provision/run` 在 `dry_run=false` 时会通过 SSH 真实执行远程命令。为减少默认误操作，命令模板可通过环境变量配置：
@@ -434,7 +501,7 @@ await page.goto("https://example.com");
 | `MASTER_PROVISION_BOOTSTRAP_CMD` | `set -e; mkdir -p /opt/cloak-manager-worker/config; DOCKER="docker"; docker ps ... || DOCKER="sudo -n docker"; $DOCKER pull <worker-image>` | 初始化前置命令。 |
 | `MASTER_PROVISION_START_CMD` | `set -e; DOCKER="docker"; docker ps ... || DOCKER="sudo -n docker"; $DOCKER rm ...; $DOCKER run ...` | 启动 Worker 命令。 |
 
-模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`、`{master_base_url}`、`{worker_api_base}`、`{auth_token}`。
+模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`、`{master_base_url}`、`{worker_api_base}`。
 
 默认模板会先尝试当前 SSH 用户直接访问 Docker daemon；如果失败，会自动改用 `sudo -n docker`。远端用户需要具备无交互 sudo 权限，否则 non dry-run 会失败并返回远端错误。
 默认模板不会向 Worker 容器注入 `MAX_RUNNING_PROFILES`，因此 Worker 使用自身 `auto` 上限（最多 15）并在每次启动 Profile 前做资源压力检查。`servers.json` 中的 `max_profiles` 仅作为 Master 调度容量提示；如果需要硬性限制某台 Worker，可在自定义 `MASTER_PROVISION_START_CMD` 中显式增加 `-e MAX_RUNNING_PROFILES=<n>`。
@@ -460,9 +527,14 @@ python3 -m master_backend.cli cluster
 python3 -m master_backend.cli nodes
 python3 -m master_backend.cli providers
 python3 -m master_backend.cli set-provider static
+python3 -m master_backend.cli sources
+python3 -m master_backend.cli validate-feishu
+python3 -m master_backend.cli set-writeback-sink noop
 python3 -m master_backend.cli create-task --authorized-target "internal test app" --task-type open_url
 python3 -m master_backend.cli task <task-id>
 python3 -m master_backend.cli task-events <task-id>
+python3 -m master_backend.cli cancel-task <task-id>
+python3 -m master_backend.cli requeue-task <task-id>
 python3 -m master_backend.cli provision-run --dry-run
 python3 -m master_backend.cli provision-jobs
 python3 -m master_backend.cli provision-job <job-id>
@@ -528,18 +600,11 @@ export MASTER_PROVISION_WORKER_API_BASE=http://{host}:8080
 
 本地一键联调脚本 `examples/master-worker/run_local.sh` 仅用于开发调试，不是公网部署主流程。
 
-## 认证
+## 访问控制
 
-默认情况下认证关闭，适合本地使用。设置 `AUTH_TOKEN` 后，将启用登录和 API Bearer Token 校验。
+当前阶段 Master API、Worker API 和两个 Web UI 默认开放，公网联调先不内置 token 鉴权。Worker 管理通过服务器 IP、用户名和密码或 SSH key 完成，相关凭据只用于 Master provision 的 SSH 登录流程。
 
-设置 `AUTH_TOKEN` 后：
-
-- Web UI 会显示登录流程。
-- API 客户端需要发送 `Authorization: Bearer <token>`。
-- VNC 和 CDP WebSocket 路由需要同一认证上下文。
-- `/api/status`、`/api/auth/status` 和 `/api/auth/login` 会保留给健康检查和登录流程使用。
-
-如果服务暴露到 localhost 之外，应在前面放置 HTTPS 终止层，并根据部署环境做好访问控制。Manager 本身提供 HTTP 服务。
+如果服务暴露到 localhost 之外，应在前面放置 HTTPS 终止层，并根据部署环境做好网络访问控制。Manager 本身提供 HTTP 服务。
 
 ## 附录：本地开发
 
@@ -614,8 +679,6 @@ Master 前端 API 代理环境变量：
 
 - `master-frontend/.env.example` 使用 `VITE_API_PROXY_TARGET=http://127.0.0.1:8080`
 - 两个前端的 Vite `allowedHosts` 可用 `VITE_ALLOWED_HOSTS=.example.com,localhost` 覆盖；默认保留 `.monkeycode-ai.online`。
-
-当启用 `AUTH_TOKEN` 时，可在 Master 前端右上角输入并保存 Token，前端会自动附带 `Authorization: Bearer <token>` 请求头。
 
 如果不设置该变量，两个前端都默认代理到 `http://localhost:8080`。
 
