@@ -6,7 +6,7 @@ from typing import Any
 
 from . import biz_repository as repo
 from . import biz_validation
-from .source_adapters import LocalJsonSource
+from . import source_registry
 
 BIZ_TASKS_PATH = Path(os.environ.get("MASTER_BIZ_TASKS_PATH", "/config/biz_tasks.json"))
 
@@ -16,7 +16,7 @@ def _int_with_default(value: Any, default: int) -> int:
 
 
 def local_biz_tasks(path: Path | None = None) -> list[dict[str, Any]]:
-    source = LocalJsonSource(infra_workers_path=Path("/dev/null"), biz_tasks_path=path or BIZ_TASKS_PATH)
+    source = source_registry.get_biz_source("local_json", path=path or BIZ_TASKS_PATH)
     return source.list_jobs()
 
 
@@ -61,13 +61,15 @@ def normalize_biz_job(item: dict[str, Any]) -> dict[str, Any] | None:
     return normalized
 
 
-def sync_biz_jobs(path: Path | None = None) -> dict[str, Any]:
+def sync_biz_jobs(path: Path | None = None, source_name: str = "local_json") -> dict[str, Any]:
+    source = source_registry.get_biz_source(source_name, path=path or BIZ_TASKS_PATH)
     imported = []
-    for item in local_biz_tasks(path):
+    for item in source.list_jobs():
         normalized = normalize_biz_job(item)
         if not normalized:
             continue
+        normalized["source"] = normalized.get("source") or source.name
         job = repo.upsert_job(normalized)
-        repo.create_event(job["id"], "job_imported", "business job imported from local_json")
+        repo.create_event(job["id"], "job_imported", f"business job imported from {source.name}")
         imported.append(job)
-    return {"source": "local_json", "count": len(imported), "jobs": imported}
+    return {"source": source.name, "count": len(imported), "jobs": imported}

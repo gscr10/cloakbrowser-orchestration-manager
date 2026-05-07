@@ -1016,6 +1016,91 @@ def test_master_provider_and_provision_dry_run(master_app_client: TestClient, tm
     assert len(list_jobs.json()) >= 1
 
 
+def test_master_sources_expose_feishu_contract(master_app_client: TestClient, monkeypatch):
+    monkeypatch.delenv("FEISHU_APP_ID", raising=False)
+
+    sources = master_app_client.get("/api/master/sources")
+    assert sources.status_code == 200
+    data = sources.json()
+    feishu_source = [item for item in data["sources"] if item["name"] == "feishu_openapi"][0]
+    feishu_sink = [item for item in data["sinks"] if item["name"] == "feishu_openapi"][0]
+
+    assert feishu_source["ready"] is False
+    assert "FEISHU_APP_ID" in feishu_source["config"]["missing_env"]
+    assert feishu_source["config"]["contract"]["idempotency"] == "source_record_id + run_generation"
+    assert feishu_sink["ready"] is False
+
+
+def test_master_task_priority_and_cancel_requeue(master_app_client: TestClient):
+    master_app_client.post(
+        "/api/master/nodes/register",
+        json={"node_id": "worker-a", "hostname": "worker-a.local", "max_profiles": 10},
+    )
+    low = master_app_client.post(
+        "/api/master/tasks",
+        json={"authorized_target": "low", "task_type": "external_cdp", "profile_id": "p-low", "priority": 1},
+    ).json()
+    high = master_app_client.post(
+        "/api/master/tasks",
+        json={"authorized_target": "high", "task_type": "external_cdp", "profile_id": "p-high", "priority": 50},
+    ).json()
+
+    pulled = master_app_client.post("/api/master/tasks/pull", json={"node_id": "worker-a"}).json()["task"]
+    assert pulled["id"] == high["id"]
+    assert pulled["priority"] == 50
+
+    cancelled = master_app_client.post(f"/api/master/tasks/{low['id']}/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+
+    requeued = master_app_client.post(f"/api/master/tasks/{low['id']}/requeue")
+    assert requeued.status_code == 200
+    assert requeued.json()["status"] == "queued"
+
+
+def test_master_recover_stuck_tasks_requeues_with_retry(master_app_client: TestClient):
+    from master_backend import database as db
+
+    task = db.create_master_task(
+        profile_id="profile-a",
+        authorized_target="stuck",
+        task_type="external_cdp",
+        payload={"profile_id": "profile-a", "task_type": "external_cdp"},
+        max_retries=1,
+        target_node_id="worker-a",
+    )
+    db.update_master_task(task["id"], status="running")
+    with db.get_db() as conn:
+        conn.execute("UPDATE master_tasks SET updated_at = ? WHERE id = ?", ("2000-01-01T00:00:00+00:00", task["id"]))
+        conn.commit()
+
+    recovered = master_app_client.post("/api/master/tasks/recover-stuck", json={"older_than_seconds": 1})
+
+    assert recovered.status_code == 200
+    assert recovered.json()["count"] == 1
+    updated = master_app_client.get(f"/api/master/tasks/{task['id']}").json()
+    assert updated["status"] == "queued"
+    assert updated["retry_count"] == 1
+
+
+def test_master_infra_reconcile_plans_deploy_for_imported_worker(master_app_client: TestClient, tmp_path: Path, monkeypatch):
+    workers_path = tmp_path / "infra_workers.json"
+    workers_path.write_text(
+        json.dumps({"workers": [{"node_id": "worker-a", "host": "10.0.0.10", "desired_state": "active"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(infra_sync, "INFRA_WORKERS_PATH", workers_path)
+    assert master_app_client.post("/api/master/infra/sync").status_code == 200
+
+    reconcile = master_app_client.post("/api/master/infra/reconcile", json={"dry_run": True})
+
+    assert reconcile.status_code == 200
+    data = reconcile.json()
+    assert data["dry_run"] is True
+    assert data["actions"][0]["node_id"] == "worker-a"
+    assert data["actions"][0]["action"] == "deploy"
+
+
 def test_master_provision_endpoint_runs_in_threadpool(master_app_client: TestClient, monkeypatch):
     from master_backend import main as master_main
 

@@ -51,6 +51,7 @@ class MasterTaskCreateRequest(BaseModel):
     worker_tags: list[str] = Field(default_factory=list)
     timeout_seconds: int = Field(default=300, ge=1, le=86400)
     max_retries: int = Field(default=1, ge=0, le=10)
+    priority: int = Field(default=0, ge=0, le=1000)
 
     @field_validator("authorized_target")
     @classmethod
@@ -59,6 +60,7 @@ class MasterTaskCreateRequest(BaseModel):
         if not value:
             raise ValueError("authorized_target is required")
         return value
+
 
 class MasterTaskPullRequest(BaseModel):
     node_id: str
@@ -83,3 +85,17 @@ class MasterProvisionRunRequest(BaseModel):
 
 class MasterSyncRequest(BaseModel):
     schedule: bool = False
+    source: str = "local_json"
+
+
+class MasterInfraSyncRequest(BaseModel):
+    source: str = "local_json"
+
+
+class MasterInfraReconcileRequest(BaseModel):
+    dry_run: bool = True
+    node_id: str | None = None
+
+
+class MasterStuckTaskRecoveryRequest(BaseModel):
+    older_than_seconds: int = Field(default=600, ge=1, le=86400)

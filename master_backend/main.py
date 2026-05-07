@@ -19,15 +19,21 @@ from . import biz_services
 from . import biz_sync
 from . import biz_validation
 from . import database as db
+from . import feishu_contract
+from . import infra_reconciler
 from . import infra_repository
 from . import infra_services
 from . import infra_sync
 from . import master_control
+from . import source_registry
 from .models import (
+    MasterInfraReconcileRequest,
+    MasterInfraSyncRequest,
     MasterNodeHeartbeatRequest,
     MasterNodeRegisterRequest,
     MasterProviderUpdateRequest,
     MasterProvisionRunRequest,
+    MasterStuckTaskRecoveryRequest,
     MasterSyncRequest,
     MasterTaskCreateRequest,
     MasterTaskPullRequest,
@@ -261,7 +267,7 @@ async def master_report_task(task_id: str, req: MasterTaskReportRequest):
 async def master_list_providers():
     active = master_control.get_active_provider_name()
     providers = list(master_control.available_providers().keys())
-    return {"active": active, "providers": providers}
+    return {"active": active, "providers": providers, "sources": source_registry.list_sources(), "sinks": source_registry.list_sinks()}
 
 
 @app.put("/api/master/providers/active")
@@ -275,11 +281,12 @@ async def master_set_provider(req: MasterProviderUpdateRequest):
 
 @app.post("/api/master/providers/feishu-openapi/validate")
 async def master_validate_feishu_openapi_provider():
-    return {
-        "provider": "feishu_openapi",
-        "ready": False,
-        "message": "feishu_openapi provider is not configured yet",
-    }
+    return feishu_contract.validate_config()
+
+
+@app.get("/api/master/sources")
+async def master_list_sources():
+    return {"sources": source_registry.list_sources(), "sinks": source_registry.list_sinks()}
 
 
 @app.get("/api/master/architecture/summary")
@@ -288,11 +295,13 @@ async def master_architecture_summary():
 
 
 @app.post("/api/master/infra/sync")
-async def master_sync_infra_workers():
+async def master_sync_infra_workers(req: MasterInfraSyncRequest | None = None):
     try:
-        result = infra_sync.sync_infra_workers()
+        result = infra_sync.sync_infra_workers(source_name=(req.source if req else "local_json"))
         result["workers"] = infra_repository.public_worker_views(result.get("workers") or [])
         return result
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -327,10 +336,18 @@ async def master_list_infra_profiles():
     return infra_repository.list_profiles()
 
 
+@app.post("/api/master/infra/reconcile")
+async def master_reconcile_infra(req: MasterInfraReconcileRequest):
+    try:
+        return await run_in_threadpool(infra_reconciler.apply_reconcile, dry_run=req.dry_run, node_id=req.node_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.post("/api/master/biz/sync")
 async def master_sync_biz_jobs(req: MasterSyncRequest):
     try:
-        result = biz_sync.sync_biz_jobs()
+        result = biz_sync.sync_biz_jobs(source_name=req.source)
         if req.schedule:
             scheduled = []
             for job in result["jobs"]:
@@ -338,6 +355,8 @@ async def master_sync_biz_jobs(req: MasterSyncRequest):
                     scheduled.append(biz_services.schedule_biz_job(job["id"], infra_services.find_available_worker))
             result["scheduled"] = scheduled
         return result
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -355,6 +374,56 @@ async def master_schedule_biz_job(job_id: str):
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+
+@app.post("/api/master/biz/jobs/{job_id}/cancel")
+async def master_cancel_biz_job(job_id: str):
+    try:
+        job = biz_services.cancel_biz_job(job_id, "cancelled by operator")
+        if job.get("master_task_id"):
+            task = db.get_master_task(job["master_task_id"])
+            if task and task.get("status") in {"queued", "dispatched", "running"}:
+                db.update_master_task(task["id"], status="cancelled", failure_reason="cancelled by operator")
+                db.create_master_task_event(task["id"], task.get("target_node_id"), "cancelled", "cancelled by operator")
+        return job
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/master/biz/jobs/{job_id}/requeue")
+async def master_requeue_biz_job(job_id: str):
+    try:
+        return biz_services.requeue_biz_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/master/tasks/recover-stuck")
+async def master_recover_stuck_tasks(req: MasterStuckTaskRecoveryRequest):
+    return biz_services.recover_stuck_master_tasks(req.older_than_seconds)
+
+
+@app.post("/api/master/tasks/{task_id}/cancel")
+async def master_cancel_task(task_id: str):
+    task = db.get_master_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    updated = db.update_master_task(task_id, status="cancelled", failure_reason="cancelled by operator")
+    db.create_master_task_event(task_id, task.get("target_node_id"), "cancelled", "cancelled by operator")
+    payload = task.get("payload") or {}
+    if payload.get("biz_job_id"):
+        biz_services.cancel_biz_job(payload["biz_job_id"], "cancelled by operator")
+    return updated
+
+
+@app.post("/api/master/tasks/{task_id}/requeue")
+async def master_requeue_task(task_id: str):
+    task = db.get_master_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    updated = db.update_master_task(task_id, status="queued", dispatch_id=None, failure_reason=None)
+    db.create_master_task_event(task_id, task.get("target_node_id"), "requeued", "requeued by operator")
+    return updated
 
 
 @app.get("/api/master/biz/events")

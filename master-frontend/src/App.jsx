@@ -57,6 +57,7 @@ function StatusPill({ value }) {
     stale: "warning",
     failed: "danger",
     final_failed: "danger",
+    cancelled: "neutral",
     offline: "danger",
     disabled: "neutral"
   }[normalized] || "neutral";
@@ -72,6 +73,7 @@ function statusText(value) {
     success: "成功",
     failed: "失败",
     final_failed: "最终失败",
+    cancelled: "已取消",
     online: "在线",
     stale: "过期",
     offline: "离线",
@@ -145,6 +147,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [feishuCheck, setFeishuCheck] = useState(null);
+  const [sourceRegistry, setSourceRegistry] = useState({ sources: [], sinks: [] });
+  const [reconcileResult, setReconcileResult] = useState(null);
   const [newTask, setNewTask] = useState({
     profile_id: "",
     authorized_target: "internal test app",
@@ -208,7 +212,8 @@ export default function App() {
         nextBizJobs,
         nextBizRuns,
         nextBizEvents,
-        nextBizArtifacts
+        nextBizArtifacts,
+        nextSources
       ] = await Promise.all([
         api("/api/master/nodes"),
         api("/api/master/cluster/status"),
@@ -225,7 +230,8 @@ export default function App() {
         api("/api/master/biz/jobs"),
         api("/api/master/biz/runs"),
         api("/api/master/biz/events"),
-        api("/api/master/biz/artifacts")
+        api("/api/master/biz/artifacts"),
+        api("/api/master/sources")
       ]);
       setNodes(nextNodes);
       setCluster(nextCluster);
@@ -243,6 +249,7 @@ export default function App() {
       setBizRuns(nextBizRuns);
       setBizEvents(nextBizEvents);
       setBizArtifacts(nextBizArtifacts);
+      setSourceRegistry(nextSources);
       if (!selectedTaskId && nextTasks[0]) setSelectedTaskId(nextTasks[0].id);
       if (!selectedJobId && nextProvisionJobs[0]) setSelectedJobId(nextProvisionJobs[0].id);
       if (!selectedBizJobId && nextBizJobs[0]) setSelectedBizJobId(nextBizJobs[0].id);
@@ -286,7 +293,7 @@ export default function App() {
       task_type: newTask.task_type,
       url: newTask.task_type === "open_url" ? (newTask.url.trim() || null) : null,
       timeout_seconds: Number(newTask.timeout_seconds) || 300,
-      max_retries: Number(newTask.max_retries) || 1
+      max_retries: newTask.max_retries === "" ? 1 : Number(newTask.max_retries)
     };
     await api("/api/master/tasks", { method: "POST", body: JSON.stringify(payload) });
     setNotice("任务已创建");
@@ -345,6 +352,46 @@ export default function App() {
     setFeishuCheck(result);
   };
 
+  const reconcileInfra = async (dryRun = true, nodeId = null) => {
+    const payload = { dry_run: dryRun };
+    if (nodeId) payload.node_id = nodeId;
+    const result = await api("/api/master/infra/reconcile", { method: "POST", body: JSON.stringify(payload) });
+    setReconcileResult(result);
+    setActivePage("infra");
+    setNotice(dryRun ? "基础设施 reconcile 计划已生成" : "基础设施 reconcile 已执行");
+    await refreshCore();
+  };
+
+  const recoverStuckTasks = async () => {
+    const result = await api("/api/master/tasks/recover-stuck", { method: "POST", body: JSON.stringify({ older_than_seconds: 600 }) });
+    setNotice(`Stuck task 回收完成：${result.count || 0} 个`);
+    await refreshCore();
+  };
+
+  const cancelTask = async (taskId) => {
+    await api(`/api/master/tasks/${taskId}/cancel`, { method: "POST" });
+    setNotice("任务已取消");
+    await refreshCore();
+  };
+
+  const requeueTask = async (taskId) => {
+    await api(`/api/master/tasks/${taskId}/requeue`, { method: "POST" });
+    setNotice("任务已重新排队");
+    await refreshCore();
+  };
+
+  const cancelBizJob = async (jobId) => {
+    await api(`/api/master/biz/jobs/${jobId}/cancel`, { method: "POST" });
+    setNotice("业务任务已取消");
+    await refreshCore();
+  };
+
+  const requeueBizJob = async (jobId) => {
+    await api(`/api/master/biz/jobs/${jobId}/requeue`, { method: "POST" });
+    setNotice("业务任务已重新进入待调度");
+    await refreshCore();
+  };
+
   const renderPage = () => {
     if (activePage === "infra") {
       return (
@@ -364,6 +411,8 @@ export default function App() {
           jobDetail={jobDetail}
           runProvision={runProvision}
           syncInfra={syncInfra}
+          reconcileInfra={reconcileInfra}
+          reconcileResult={reconcileResult}
         />
       );
     }
@@ -376,6 +425,8 @@ export default function App() {
           selectedBizJob={selectedBizJob}
           setSelectedBizJobId={setSelectedBizJobId}
           syncBiz={syncBiz}
+          cancelBizJob={cancelBizJob}
+          requeueBizJob={requeueBizJob}
         />
       );
     }
@@ -392,6 +443,9 @@ export default function App() {
           createTask={createTask}
           newTask={newTask}
           setNewTask={setNewTask}
+          recoverStuckTasks={recoverStuckTasks}
+          cancelTask={cancelTask}
+          requeueTask={requeueTask}
         />
       );
     }
@@ -406,6 +460,7 @@ export default function App() {
           setProvider={setProvider}
           validateFeishu={validateFeishu}
           feishuCheck={feishuCheck}
+          sourceRegistry={sourceRegistry}
         />
       );
     }
@@ -557,7 +612,7 @@ function FlowArrow() {
   return <div className="flow-arrow">→</div>;
 }
 
-function InfraPage({ infraWorkers, infraCapabilities, infraEvents, infraSyncRuns, nodes, provisionServers, visibleProvisionServers, showEnabledOnly, setShowEnabledOnly, provisionJobs, selectedJobId, setSelectedJobId, jobDetail, runProvision, syncInfra }) {
+function InfraPage({ infraWorkers, infraCapabilities, infraEvents, infraSyncRuns, nodes, provisionServers, visibleProvisionServers, showEnabledOnly, setShowEnabledOnly, provisionJobs, selectedJobId, setSelectedJobId, jobDetail, runProvision, syncInfra, reconcileInfra, reconcileResult }) {
   const workerByNode = new Map(nodes.map((node) => [node.node_id, node]));
   return (
     <div className="page-stack">
@@ -569,6 +624,7 @@ function InfraPage({ infraWorkers, infraCapabilities, infraEvents, infraSyncRuns
         </div>
         <div className="header-actions">
           <button onClick={syncInfra}>同步 Worker 表</button>
+          <button className="secondary" onClick={() => reconcileInfra(true)}>Reconcile 计划</button>
           <button className="secondary" onClick={() => runProvision(true)}>部署演练</button>
           <button className="warn" onClick={() => runProvision(false)}>真实部署</button>
         </div>
@@ -682,6 +738,29 @@ function InfraPage({ infraWorkers, infraCapabilities, infraEvents, infraSyncRuns
       </section>
 
       <section className="panel">
+        <div className="panel-title">
+          <h3>Desired State Reconcile</h3>
+          <span className="muted">把 Worker 期望状态转换为部署、停用、重部署或清理动作</span>
+        </div>
+        <table>
+          <thead><tr><th>Node</th><th>Desired</th><th>Actual</th><th>Infra</th><th>动作</th><th>原因</th></tr></thead>
+          <tbody>
+            {(!reconcileResult?.actions?.length) && <EmptyRow colSpan={6} message="点击 Reconcile 计划生成动作列表" />}
+            {(reconcileResult?.actions || []).map((item, idx) => (
+              <tr key={`${item.node_id}-${idx}`}>
+                <td>{item.node_id}</td>
+                <td>{item.desired_state}</td>
+                <td><StatusPill value={item.actual_status} /></td>
+                <td><StatusPill value={item.infra_status} /></td>
+                <td><b>{item.action}</b><small>{item.applied ? "已执行" : "未执行"}</small></td>
+                <td>{item.reason}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      <section className="panel">
         <div className="panel-title"><h3>同步记录</h3></div>
         <table>
           <thead><tr><th>ID</th><th>来源</th><th>类型</th><th>状态</th><th>导入数</th><th>时间</th><th>错误</th></tr></thead>
@@ -705,7 +784,7 @@ function InfraPage({ infraWorkers, infraCapabilities, infraEvents, infraSyncRuns
   );
 }
 
-function BizPage({ bizJobs, bizRuns, bizArtifacts, selectedBizJob, setSelectedBizJobId, syncBiz }) {
+function BizPage({ bizJobs, bizRuns, bizArtifacts, selectedBizJob, setSelectedBizJobId, syncBiz, cancelBizJob, requeueBizJob }) {
   const runsForJob = selectedBizJob ? bizRuns.filter((run) => run.biz_job_id === selectedBizJob.id) : [];
   return (
     <div className="page-stack">
@@ -753,7 +832,15 @@ function BizPage({ bizJobs, bizRuns, bizArtifacts, selectedBizJob, setSelectedBi
         </div>
 
         <div className="panel detail-panel">
-          <div className="panel-title"><h3>任务详情</h3></div>
+          <div className="panel-title">
+            <h3>任务详情</h3>
+            {selectedBizJob && (
+              <div className="button-row compact">
+                <button className="secondary" onClick={() => requeueBizJob(selectedBizJob.id)}>重排队</button>
+                <button className="warn" onClick={() => cancelBizJob(selectedBizJob.id)}>取消</button>
+              </div>
+            )}
+          </div>
           {selectedBizJob ? (
             <>
               <div className="detail-grid">
@@ -816,7 +903,7 @@ function BizPage({ bizJobs, bizRuns, bizArtifacts, selectedBizJob, setSelectedBi
   );
 }
 
-function ProfilesPage({ infraProfiles, nodes, tasks, selectedTaskId, setSelectedTaskId, taskDetail, taskEvents, createTask, newTask, setNewTask }) {
+function ProfilesPage({ infraProfiles, nodes, tasks, selectedTaskId, setSelectedTaskId, taskDetail, taskEvents, createTask, newTask, setNewTask, recoverStuckTasks, cancelTask, requeueTask }) {
   const runningProfiles = infraProfiles.filter((p) => p.status === "running").length;
   const stoppedProfiles = infraProfiles.filter((p) => p.status === "stopped").length;
   return (
@@ -826,6 +913,9 @@ function ProfilesPage({ infraProfiles, nodes, tasks, selectedTaskId, setSelected
           <p className="eyebrow">Profile observability</p>
           <h2>浏览器实例、VNC/CDP 入口和执行任务来源独立展示</h2>
           <p>这里是执行面监控页，用来定位正在跑的 Profile、所属 Worker、任务来源和浏览器入口。</p>
+        </div>
+        <div className="header-actions">
+          <button className="secondary" onClick={recoverStuckTasks}>回收 stuck task</button>
         </div>
       </section>
 
@@ -860,7 +950,15 @@ function ProfilesPage({ infraProfiles, nodes, tasks, selectedTaskId, setSelected
         </div>
 
         <div className="panel">
-          <div className="panel-title"><h3>Master 任务与事件</h3></div>
+          <div className="panel-title">
+            <h3>Master 任务与事件</h3>
+            {taskDetail && (
+              <div className="button-row compact">
+                <button className="secondary" onClick={() => requeueTask(taskDetail.id)}>重排队</button>
+                <button className="warn" onClick={() => cancelTask(taskDetail.id)}>取消</button>
+              </div>
+            )}
+          </div>
           <select value={selectedTaskId} onChange={(e) => setSelectedTaskId(e.target.value)}>
             <option value="">选择任务</option>
             {tasks.map((task) => <option key={task.id} value={task.id}>{shortId(task.id)} | {statusText(task.status)} | {task.target_node_id || "未分配"}</option>)}
@@ -928,7 +1026,7 @@ function EventsPage({ infraEvents, bizEvents, taskEvents }) {
   );
 }
 
-function SettingsPage({ providers, provisionServers, setProvider, validateFeishu, feishuCheck }) {
+function SettingsPage({ providers, provisionServers, setProvider, validateFeishu, feishuCheck, sourceRegistry }) {
   return (
     <div className="page-stack">
       <section className="page-header-card">
@@ -936,6 +1034,43 @@ function SettingsPage({ providers, provisionServers, setProvider, validateFeishu
           <p className="eyebrow">Sources and adapters</p>
           <h2>配置、Provider、Feishu adapter 独立管理</h2>
           <p>Local JSON 是 Feishu OpenAPI 前的替身，字段名保持可替换，后续只换同步 adapter。</p>
+        </div>
+      </section>
+
+      <section className="grid two">
+        <div className="panel">
+          <div className="panel-title"><h3>Source Registry</h3><span className="muted">统一数据源健康检查</span></div>
+          <table>
+            <thead><tr><th>Source</th><th>类型</th><th>状态</th><th>说明</th></tr></thead>
+            <tbody>
+              {(!sourceRegistry?.sources?.length) && <EmptyRow colSpan={4} />}
+              {(sourceRegistry?.sources || []).map((source, idx) => (
+                <tr key={`${source.name}-${source.kind}-${idx}`}>
+                  <td><b>{source.name}</b></td>
+                  <td>{source.kind}</td>
+                  <td><StatusPill value={source.ready ? "success" : "pending_schedule"} /></td>
+                  <td>{source.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="panel">
+          <div className="panel-title"><h3>Writeback Sink</h3><span className="muted">业务结果回写目标</span></div>
+          <table>
+            <thead><tr><th>Sink</th><th>状态</th><th>说明</th></tr></thead>
+            <tbody>
+              {(!sourceRegistry?.sinks?.length) && <EmptyRow colSpan={3} />}
+              {(sourceRegistry?.sinks || []).map((sink) => (
+                <tr key={sink.name}>
+                  <td><b>{sink.name}</b></td>
+                  <td><StatusPill value={sink.ready ? "success" : "pending_schedule"} /></td>
+                  <td>{sink.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
 
