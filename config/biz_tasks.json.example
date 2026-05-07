@@ -29,7 +29,8 @@
           "idle_between_actions": true,
           "idle_between_duration": [0.3, 0.8]
         },
-        "auto_turnstile_timeout": 80
+        "auto_turnstile_timeout": 80,
+        "turnstile_page_attempts": 2
       }
     }
   ]
