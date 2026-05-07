@@ -36,6 +36,11 @@ def find_available_worker(
     by_node = {}
     for cap in capabilities:
         by_node.setdefault(cap["node_id"], set()).add((cap["script_key"], cap["script_version"]))
+    active_counts: dict[str, int] = {}
+    for task in db.list_master_tasks():
+        node_id = task.get("target_node_id")
+        if node_id and task.get("status") in {"queued", "dispatched", "running"}:
+            active_counts[str(node_id)] = active_counts.get(str(node_id), 0) + 1
 
     candidates = []
     now = dt.datetime.now(dt.timezone.utc)
@@ -47,7 +52,9 @@ def find_available_worker(
             continue
         running_profiles = int(node.get("running_profiles") or 0)
         max_profiles = int(node.get("max_profiles") or 15)
-        if running_profiles >= max_profiles:
+        reserved_profiles = active_counts.get(node["node_id"], 0)
+        effective_profiles = running_profiles + reserved_profiles
+        if effective_profiles >= max_profiles:
             continue
         cpu = float(node.get("cpu_percent") or 0.0)
         mem_total = int(node.get("mem_total_mb") or 0)
@@ -85,8 +92,8 @@ def find_available_worker(
                         script_running += 1
                 if script_running >= max_running_per_script:
                     continue
-            available_slots = max_profiles - running_profiles
-            candidates.append((running_profiles, cpu, mem_ratio, node, available_slots, sorted(node_tags)))
+            available_slots = max_profiles - effective_profiles
+            candidates.append((effective_profiles, cpu, mem_ratio, node, available_slots, sorted(node_tags)))
     if not candidates:
         return None
     candidates.sort(key=lambda item: (item[0], item[1], item[2]))

@@ -77,10 +77,13 @@ def contract_summary() -> dict[str, Any]:
 def validate_config(env: dict[str, str] | None = None) -> dict[str, Any]:
     env = env or os.environ
     missing = [name for name in REQUIRED_ENV if not env.get(name)]
+    message = "feishu_openapi is configured"
+    if missing:
+        message = f"feishu_openapi provider is not configured yet; missing env: {', '.join(missing)}"
     return {
         "provider": "feishu_openapi",
         "ready": not missing,
         "missing_env": missing,
-        "message": "feishu_openapi is configured" if not missing else "feishu_openapi provider is not configured yet",
+        "message": message,
         "contract": contract_summary(),
     }

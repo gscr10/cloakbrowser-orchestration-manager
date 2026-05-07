@@ -27,11 +27,13 @@ def enabled() -> bool:
 def settings() -> dict[str, Any]:
     api_port = int(os.environ.get("WORKER_API_PORT", "8080"))
     api_base = os.environ.get("WORKER_API_BASE") or f"http://127.0.0.1:{api_port}"
+    tags = [item.strip() for item in os.environ.get("WORKER_TAGS", "").split(",") if item.strip()]
     return {
         "master_url": os.environ.get("MASTER_BASE_URL", "http://127.0.0.1:8080").rstrip("/"),
         "node_id": os.environ.get("WORKER_NODE_ID", socket.gethostname()),
         "hostname": os.environ.get("WORKER_HOSTNAME", socket.gethostname()),
         "api_base": api_base.rstrip("/"),
+        "tags": tags,
         "poll_interval": float(os.environ.get("WORKER_POLL_INTERVAL_SECONDS", "5")),
         "heartbeat_interval": float(os.environ.get("WORKER_HEARTBEAT_INTERVAL_SECONDS", "5")),
         "max_profiles": int(os.environ.get("MAX_RUNNING_PROFILES", "15") if os.environ.get("MAX_RUNNING_PROFILES", "15").isdigit() else 15),
@@ -45,6 +47,7 @@ async def register_node(client: httpx.AsyncClient, cfg: dict[str, Any]) -> None:
             "node_id": cfg["node_id"],
             "hostname": cfg["hostname"],
             "api_base": cfg.get("api_base"),
+            "tags": cfg.get("tags") or [],
             "max_profiles": cfg["max_profiles"],
             "capabilities": list_templates(),
         },
