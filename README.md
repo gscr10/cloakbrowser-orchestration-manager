@@ -1,4 +1,4 @@
-# CloakBrowser Orchestration Manager
+# eCloakBrowser Orchestration Manager
 
 这是一个面向公网 Master/Worker 部署的 CloakBrowser 编排管理服务。Master 负责服务器清单、批量初始化和全局任务分配；Worker 负责运行隔离浏览器 Profile，并通过 Worker UI/API、VNC 和 CDP 暴露执行能力。
 
@@ -26,8 +26,8 @@
 
 本项目已作为独立仓库维护，但实现上参考和依赖了以下项目：
 
-- `CloakBrowser`: https://github.com/CloakHQ/CloakBrowser
-- `CloakBrowser-Manager`: https://github.com/CloakHQ/CloakBrowser-Manager
+- `CloakBrowser`: [https://github.com/CloakHQ/CloakBrowser](https://github.com/CloakHQ/CloakBrowser)
+- `CloakBrowser-Manager`: [https://github.com/CloakHQ/CloakBrowser-Manager](https://github.com/CloakHQ/CloakBrowser-Manager)
 
 当前仓库不会保留上游仓库的 Git 远端关系，也不会以 fork 形式维护。README 中的运行方式、API、CLI 和 Docker 配置均以本仓库当前实现为准。
 
@@ -92,7 +92,7 @@ export MASTER_PROVISION_MASTER_BASE_URL="http://${MASTER_PUBLIC_IP}:8080"
 export MASTER_PROVISION_WORKER_API_BASE="http://{host}:8080"
 ```
 
-2. 启动 Master：
+1. 启动 Master：
 
 ```bash
 docker pull ghcr.io/gscr10/cloakbrowser-orchestration-manager-master:latest
@@ -110,7 +110,7 @@ docker run -d --name cloak-manager-master --restart unless-stopped \
 
 如果使用 Feishu OpenAPI provider 或回写，建议把 `FEISHU_*` 放在仅本机保存的 env 文件或部署密钥中，并用 `--env-file <local-env-file>` 传入 Master 容器。可参考 `examples/master-worker/env.local.sample` 的变量名，不要提交真实 secret。
 
-3. 选择静态 Provider，先 dry-run，再真实 provision Worker：
+1. 选择静态 Provider，先 dry-run，再真实 provision Worker：
 
 ```bash
 python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" providers
@@ -122,7 +122,7 @@ python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" provi
 
 默认 provision 模板会先尝试直接执行 `docker`，失败时自动回退到 `sudo -n docker`，并用 sudo-aware 方式创建/chown `/opt/cloak-manager-worker/config`。远端用户需要能无交互执行 Docker 或具备无交互 sudo 权限；失败信息会区分 Docker 权限、sudo NOPASSWD、git 缺失和 `/opt` 目录权限。
 
-4. 创建任务并人工检查前端：
+1. 创建任务并人工检查前端：
 
 ```bash
 python3 -m master_backend.cli --base-url "http://${MASTER_PUBLIC_IP}:8080" create-task \
@@ -156,13 +156,15 @@ python3 examples/master-worker/public_e2e.py \
 
 ## 运行时环境变量
 
-| 变量 | 默认值 | 作用 |
-| --- | --- | --- |
-| `CONFIG_DIR` | `/config` | 外部配置文件目录。 |
-| `CONFIG_IMPORT_ON_START` | `false` | 为 true 时启动阶段导入 `/config/profiles.json` 和 `/config/proxies.csv`。 |
-| `MAX_RUNNING_PROFILES` | `auto` | 单个服务允许同时运行的 Profile 上限。默认自适应，硬上限为 15；也可以显式设置 1-15 的数字。该限制作用于 UI/API/CLI 手动启动和调度器启动。 |
-| `DISABLE_RESOURCE_PRESSURE_CHECK` | `false` | 为 `true` 时跳过启动前的内存和 CPU 压力检查，仅保留 `MAX_RUNNING_PROFILES` 数量限制。适合受限测试环境或手动排障，不建议常规生产默认开启。 |
-| `SCHEDULER_INTERVAL_SECONDS` | `5` | 后台调度器轮询间隔。 |
+
+| 变量                                | 默认值       | 作用                                                                                      |
+| --------------------------------- | --------- | --------------------------------------------------------------------------------------- |
+| `CONFIG_DIR`                      | `/config` | 外部配置文件目录。                                                                               |
+| `CONFIG_IMPORT_ON_START`          | `false`   | 为 true 时启动阶段导入 `/config/profiles.json` 和 `/config/proxies.csv`。                         |
+| `MAX_RUNNING_PROFILES`            | `auto`    | 单个服务允许同时运行的 Profile 上限。默认自适应，硬上限为 15；也可以显式设置 1-15 的数字。该限制作用于 UI/API/CLI 手动启动和调度器启动。     |
+| `DISABLE_RESOURCE_PRESSURE_CHECK` | `false`   | 为 `true` 时跳过启动前的内存和 CPU 压力检查，仅保留 `MAX_RUNNING_PROFILES` 数量限制。适合受限测试环境或手动排障，不建议常规生产默认开启。 |
+| `SCHEDULER_INTERVAL_SECONDS`      | `5`       | 后台调度器轮询间隔。                                                                              |
+
 
 Chromium 运行需要足够的共享内存，建议启动容器时至少使用 `--shm-size=512m`。如果单机并发较高或页面较重，可以按服务器资源提高到 `1g`、`2g` 或更大。
 
@@ -279,31 +281,33 @@ python3 -m worker_backend.cli scheduler tick
 
 核心接口：
 
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `GET` | `/api/status` | 服务健康和状态摘要。 |
-| `GET` | `/api/profiles` | 列出 Profile。 |
-| `POST` | `/api/profiles` | 创建 Profile。 |
-| `GET` | `/api/profiles/{profile_id}` | 查询 Profile。 |
-| `PUT` | `/api/profiles/{profile_id}` | 更新 Profile。 |
-| `DELETE` | `/api/profiles/{profile_id}` | 删除 Profile；若仍在运行会先自动停止。 |
-| `POST` | `/api/profiles/{profile_id}/launch` | 启动 Profile。 |
-| `POST` | `/api/profiles/{profile_id}/stop` | 停止 Profile。 |
-| `GET` | `/api/profiles/{profile_id}/status` | 查询运行状态。 |
-| `GET` | `/api/profiles/{profile_id}/cdp` | 查询 CDP 连接信息。 |
-| `WS` | `/api/profiles/{profile_id}/vnc` | VNC WebSocket 代理。 |
-| `POST` | `/api/profiles/{profile_id}/clipboard` | 向运行中的 Profile 写入剪贴板文本。 |
-| `GET` | `/api/proxies` | 列出代理端点。 |
-| `POST` | `/api/proxies` | 创建代理端点。 |
-| `POST` | `/api/proxies/import` | 导入代理 CSV。 |
-| `POST` | `/api/config/import` | 导入 `/config` 文件。 |
-| `GET` | `/api/tasks` | 列出调度任务。 |
-| `POST` | `/api/tasks` | 创建队列任务。 |
-| `POST` | `/api/tasks/{task_id}/cancel` | 取消排队或运行中的任务；运行中会停止对应 Profile。 |
-| `POST` | `/api/distributed/tasks/{master_task_id}/cancel` | Master 分布式模式下按全局任务 ID 取消 Worker 本地任务。 |
-| `GET` | `/api/runs` | 列出 Profile 运行记录。 |
-| `GET` | `/api/scheduler/status` | 查询调度器状态。 |
-| `POST` | `/api/scheduler/tick` | 手动执行一次调度 tick。 |
+
+| 方法       | 路径                                               | 用途                                    |
+| -------- | ------------------------------------------------ | ------------------------------------- |
+| `GET`    | `/api/status`                                    | 服务健康和状态摘要。                            |
+| `GET`    | `/api/profiles`                                  | 列出 Profile。                           |
+| `POST`   | `/api/profiles`                                  | 创建 Profile。                           |
+| `GET`    | `/api/profiles/{profile_id}`                     | 查询 Profile。                           |
+| `PUT`    | `/api/profiles/{profile_id}`                     | 更新 Profile。                           |
+| `DELETE` | `/api/profiles/{profile_id}`                     | 删除 Profile；若仍在运行会先自动停止。               |
+| `POST`   | `/api/profiles/{profile_id}/launch`              | 启动 Profile。                           |
+| `POST`   | `/api/profiles/{profile_id}/stop`                | 停止 Profile。                           |
+| `GET`    | `/api/profiles/{profile_id}/status`              | 查询运行状态。                               |
+| `GET`    | `/api/profiles/{profile_id}/cdp`                 | 查询 CDP 连接信息。                          |
+| `WS`     | `/api/profiles/{profile_id}/vnc`                 | VNC WebSocket 代理。                     |
+| `POST`   | `/api/profiles/{profile_id}/clipboard`           | 向运行中的 Profile 写入剪贴板文本。                |
+| `GET`    | `/api/proxies`                                   | 列出代理端点。                               |
+| `POST`   | `/api/proxies`                                   | 创建代理端点。                               |
+| `POST`   | `/api/proxies/import`                            | 导入代理 CSV。                             |
+| `POST`   | `/api/config/import`                             | 导入 `/config` 文件。                      |
+| `GET`    | `/api/tasks`                                     | 列出调度任务。                               |
+| `POST`   | `/api/tasks`                                     | 创建队列任务。                               |
+| `POST`   | `/api/tasks/{task_id}/cancel`                    | 取消排队或运行中的任务；运行中会停止对应 Profile。         |
+| `POST`   | `/api/distributed/tasks/{master_task_id}/cancel` | Master 分布式模式下按全局任务 ID 取消 Worker 本地任务。 |
+| `GET`    | `/api/runs`                                      | 列出 Profile 运行记录。                      |
+| `GET`    | `/api/scheduler/status`                          | 查询调度器状态。                              |
+| `POST`   | `/api/scheduler/tick`                            | 手动执行一次调度 tick。                        |
+
 
 Profile 启动示例：
 
@@ -420,52 +424,58 @@ flowchart TD
     bizResult --> bizDb
 ```
 
+
+
 第一版可以用 `config/infra_workers.json.example` 和 `config/biz_tasks.json.example` 模拟飞书表。字段保持 `source_record_id`、`run_generation`、`script_key`、`script_version`、`worker_tags` 等 Feishu OpenAPI 可替换结构；后续接入 Feishu 时只替换同步 adapter，不改变 infra/biz 内部状态机。
 
 若需在 Worker 节点启用自动拉取执行循环，设置：
 
-| 变量 | 默认值 | 作用 |
-| --- | --- | --- |
-| `DISTRIBUTED_WORKER_ENABLED` | `false` | 设为 `true` 时启动 Worker 拉任务循环。 |
-| `MASTER_BASE_URL` | `http://127.0.0.1:8080` | Master API 地址。 |
-| `WORKER_API_BASE` | `http://127.0.0.1:<WORKER_API_PORT>` | Worker 注册给 Master 的可访问 API 地址。公网或多机部署必须设为 `http://<worker-ip>:8080`。 |
-| `WORKER_NODE_ID` | 主机名 | Worker 节点唯一标识。 |
-| `WORKER_HOSTNAME` | 主机名 | Worker 对外展示主机名。 |
-| `WORKER_POLL_INTERVAL_SECONDS` | `5` | 空队列轮询间隔。 |
-| `WORKER_HEARTBEAT_INTERVAL_SECONDS` | `5` | 心跳上报间隔。 |
+
+| 变量                                  | 默认值                                  | 作用                                                                   |
+| ----------------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
+| `DISTRIBUTED_WORKER_ENABLED`        | `false`                              | 设为 `true` 时启动 Worker 拉任务循环。                                          |
+| `MASTER_BASE_URL`                   | `http://127.0.0.1:8080`              | Master API 地址。                                                       |
+| `WORKER_API_BASE`                   | `http://127.0.0.1:<WORKER_API_PORT>` | Worker 注册给 Master 的可访问 API 地址。公网或多机部署必须设为 `http://<worker-ip>:8080`。 |
+| `WORKER_NODE_ID`                    | 主机名                                  | Worker 节点唯一标识。                                                       |
+| `WORKER_HOSTNAME`                   | 主机名                                  | Worker 对外展示主机名。                                                      |
+| `WORKER_POLL_INTERVAL_SECONDS`      | `5`                                  | 空队列轮询间隔。                                                             |
+| `WORKER_HEARTBEAT_INTERVAL_SECONDS` | `5`                                  | 心跳上报间隔。                                                              |
+
 
 核心接口：
 
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `GET` | `/api/master/nodes` | 列出已注册 Worker 节点。 |
-| `POST` | `/api/master/nodes/register` | 注册 Worker 节点。 |
-| `POST` | `/api/master/nodes/heartbeat` | 上报节点资源与运行状态。 |
-| `GET` | `/api/master/cluster/status` | 查看节点与全局任务汇总。 |
-| `POST` | `/api/master/tasks` | 创建全局任务并自动分配目标节点。 |
-| `GET` | `/api/master/tasks` | 列出全局任务。 |
-| `GET` | `/api/master/tasks/{task_id}` | 查询单个全局任务。 |
-| `GET` | `/api/master/tasks/{task_id}/events` | 查询任务事件时间线。 |
-| `POST` | `/api/master/tasks/pull` | Worker 拉取分配给自己的任务。 |
-| `POST` | `/api/master/tasks/{task_id}/report` | Worker 回报 started/success/failed/cancelled。 |
-| `GET` | `/api/master/providers` | 查看 Provider 列表与当前激活项。 |
-| `PUT` | `/api/master/providers/active` | 切换当前 Provider。 |
-| `POST` | `/api/master/providers/feishu-openapi/validate` | 检查 Feishu OpenAPI 必需环境变量与字段契约。 |
-| `POST` | `/api/master/providers/feishu-openapi/smoke` | 使用真实 Feishu 配置读取 infra/biz 表，验证 OpenAPI 连通性。 |
-| `GET` | `/api/master/sources` | 查看 infra/biz sources、writeback sinks 与当前 active sink。 |
-| `PUT` | `/api/master/writeback/active` | 切换业务结果回写目标，例如 `noop` 或 `feishu_openapi`。 |
-| `POST` | `/api/master/provision/run` | 按当前 Provider 执行批量或单 Worker 初始化，支持 `node_id`。 |
-| `GET` | `/api/master/provision/jobs` | 列出初始化任务。 |
-| `GET` | `/api/master/provision/jobs/{job_id}` | 查看初始化任务详情。 |
-| `POST` | `/api/master/infra/sync` | 从基础设施数据源同步 Worker 服务器清单。 |
-| `GET` | `/api/master/infra/workers` | 查看基础设施 Worker desired/actual 状态。 |
-| `GET` | `/api/master/infra/capabilities` | 查看 Worker 上报的脚本能力。 |
-| `GET` | `/api/master/infra/profiles` | 查看 Master 汇总的 Worker Profile 运行观测。 |
-| `POST` | `/api/master/biz/sync` | 从业务数据源同步业务任务，可选择同步后调度。 |
-| `GET` | `/api/master/biz/jobs` | 查看内部业务任务状态。 |
-| `GET` | `/api/master/biz/input-schemas` | 查看当前 Master 认可的业务脚本输入 schema。 |
-| `GET` | `/api/master/biz/runs` | 查看业务任务运行记录。 |
-| `GET` | `/api/master/biz/events` | 查看业务事件。 |
+
+| 方法     | 路径                                              | 用途                                                    |
+| ------ | ----------------------------------------------- | ----------------------------------------------------- |
+| `GET`  | `/api/master/nodes`                             | 列出已注册 Worker 节点。                                      |
+| `POST` | `/api/master/nodes/register`                    | 注册 Worker 节点。                                         |
+| `POST` | `/api/master/nodes/heartbeat`                   | 上报节点资源与运行状态。                                          |
+| `GET`  | `/api/master/cluster/status`                    | 查看节点与全局任务汇总。                                          |
+| `POST` | `/api/master/tasks`                             | 创建全局任务并自动分配目标节点。                                      |
+| `GET`  | `/api/master/tasks`                             | 列出全局任务。                                               |
+| `GET`  | `/api/master/tasks/{task_id}`                   | 查询单个全局任务。                                             |
+| `GET`  | `/api/master/tasks/{task_id}/events`            | 查询任务事件时间线。                                            |
+| `POST` | `/api/master/tasks/pull`                        | Worker 拉取分配给自己的任务。                                    |
+| `POST` | `/api/master/tasks/{task_id}/report`            | Worker 回报 started/success/failed/cancelled。           |
+| `GET`  | `/api/master/providers`                         | 查看 Provider 列表与当前激活项。                                 |
+| `PUT`  | `/api/master/providers/active`                  | 切换当前 Provider。                                        |
+| `POST` | `/api/master/providers/feishu-openapi/validate` | 检查 Feishu OpenAPI 必需环境变量与字段契约。                        |
+| `POST` | `/api/master/providers/feishu-openapi/smoke`    | 使用真实 Feishu 配置读取 infra/biz 表，验证 OpenAPI 连通性。          |
+| `GET`  | `/api/master/sources`                           | 查看 infra/biz sources、writeback sinks 与当前 active sink。 |
+| `PUT`  | `/api/master/writeback/active`                  | 切换业务结果回写目标，例如 `noop` 或 `feishu_openapi`。              |
+| `POST` | `/api/master/provision/run`                     | 按当前 Provider 执行批量或单 Worker 初始化，支持 `node_id`。          |
+| `GET`  | `/api/master/provision/jobs`                    | 列出初始化任务。                                              |
+| `GET`  | `/api/master/provision/jobs/{job_id}`           | 查看初始化任务详情。                                            |
+| `POST` | `/api/master/infra/sync`                        | 从基础设施数据源同步 Worker 服务器清单。                              |
+| `GET`  | `/api/master/infra/workers`                     | 查看基础设施 Worker desired/actual 状态。                      |
+| `GET`  | `/api/master/infra/capabilities`                | 查看 Worker 上报的脚本能力。                                    |
+| `GET`  | `/api/master/infra/profiles`                    | 查看 Master 汇总的 Worker Profile 运行观测。                    |
+| `POST` | `/api/master/biz/sync`                          | 从业务数据源同步业务任务，可选择同步后调度。                                |
+| `GET`  | `/api/master/biz/jobs`                          | 查看内部业务任务状态。                                           |
+| `GET`  | `/api/master/biz/input-schemas`                 | 查看当前 Master 认可的业务脚本输入 schema。                         |
+| `GET`  | `/api/master/biz/runs`                          | 查看业务任务运行记录。                                           |
+| `GET`  | `/api/master/biz/events`                        | 查看业务事件。                                               |
+
 
 ### 静态服务器列表（Provider=static）
 
@@ -492,11 +502,13 @@ flowchart TD
 
 当以下环境变量都配置后，可以将 `feishu_openapi` 同时用于 infra sync、biz sync、provision Provider 和业务结果回写：
 
-| 变量 | 作用 |
-| --- | --- |
-| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 获取飞书 tenant access token。 |
-| `FEISHU_INFRA_APP_TOKEN` / `FEISHU_INFRA_TABLE_ID` | 读取基础设施 Worker 表。 |
-| `FEISHU_BIZ_APP_TOKEN` / `FEISHU_BIZ_TABLE_ID` | 读取业务任务表并回写业务结果。 |
+
+| 变量                                                 | 作用                        |
+| -------------------------------------------------- | ------------------------- |
+| `FEISHU_APP_ID` / `FEISHU_APP_SECRET`              | 获取飞书 tenant access token。 |
+| `FEISHU_INFRA_APP_TOKEN` / `FEISHU_INFRA_TABLE_ID` | 读取基础设施 Worker 表。          |
+| `FEISHU_BIZ_APP_TOKEN` / `FEISHU_BIZ_TABLE_ID`     | 读取业务任务表并回写业务结果。           |
+
 
 建议先调用 `/api/master/providers/feishu-openapi/validate` 查看缺失配置，再调用 `/api/master/providers/feishu-openapi/smoke` 做真实读取验证。验证通过后，可切换 Provider 为 `feishu_openapi`，也可将 writeback sink 切换为 `feishu_openapi`。
 
@@ -506,22 +518,24 @@ Master 容器常用启动方式是保留 `config/` 只读挂载，再额外用 `
 
 `/api/master/provision/run` 在 `dry_run=false` 时会通过 SSH 真实执行远程命令。为减少默认误操作，命令模板可通过环境变量配置：
 
-| 变量 | 默认值 | 作用 |
-| --- | --- | --- |
-| `MASTER_PROVISION_TIMEOUT_SECONDS` | `120` | 单台服务器 SSH 执行超时时间（秒）。 |
-| `MASTER_PROVISION_MAX_PARALLEL` | `4` | 批量初始化最大并发数。 |
-| `MASTER_PROVISION_VERIFY_WAIT_SECONDS` | `30` | non dry-run 后等待 Worker 注册心跳的超时时间（秒）。 |
-| `MASTER_PROVISION_VERIFY_INTERVAL_SECONDS` | `2` | 注册心跳校验轮询间隔（秒）。 |
-| `MASTER_NODE_HEARTBEAT_TTL_SECONDS` | `30` | 节点心跳超时阈值，超时节点不会参与任务分配。 |
-| `MASTER_PROVISION_WORKER_IMAGE` | `ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest` | Worker 部署镜像。 |
-| `MASTER_PROVISION_REPO_URL` | `https://github.com/gscr10/cloakbrowser-orchestration-manager.git` | `github_main_clean_rebuild` 模式下用于 clone 的仓库地址。 |
-| `MASTER_PROVISION_REPO_REF` | `main` | `github_main_clean_rebuild` 模式下 checkout 的分支或 tag。 |
-| `MASTER_PROVISION_WORKER_SOURCE_DIR` | `/opt/cloakbrowser-orchestration-manager` | `github_main_clean_rebuild` 模式下的远端源码目录。 |
-| `MASTER_PROVISION_WORKER_CONFIG_DIR` | `/opt/cloak-manager-worker/config` | Worker 远端只读配置目录。 |
-| `MASTER_PROVISION_MASTER_BASE_URL` | `http://host.docker.internal:8080` | Worker 回连 Master 的地址模板值。默认值仅用于本地 Docker 特例；公网多机部署必须设为 `http://<master-ip>:8080`。 |
-| `MASTER_PROVISION_WORKER_API_BASE` | `http://{host}:8080` | Worker 注册给 Master 的 API 地址模板值，支持 `{host}` 等占位符。 |
-| `MASTER_PROVISION_BOOTSTRAP_CMD` | sudo-aware Docker pull 模板 | 初始化前置命令。 |
-| `MASTER_PROVISION_START_CMD` | sudo-aware Docker run 模板 | 启动 Worker 命令。 |
+
+| 变量                                         | 默认值                                                                | 作用                                                                               |
+| ------------------------------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `MASTER_PROVISION_TIMEOUT_SECONDS`         | `120`                                                              | 单台服务器 SSH 执行超时时间（秒）。                                                             |
+| `MASTER_PROVISION_MAX_PARALLEL`            | `4`                                                                | 批量初始化最大并发数。                                                                      |
+| `MASTER_PROVISION_VERIFY_WAIT_SECONDS`     | `30`                                                               | non dry-run 后等待 Worker 注册心跳的超时时间（秒）。                                             |
+| `MASTER_PROVISION_VERIFY_INTERVAL_SECONDS` | `2`                                                                | 注册心跳校验轮询间隔（秒）。                                                                   |
+| `MASTER_NODE_HEARTBEAT_TTL_SECONDS`        | `30`                                                               | 节点心跳超时阈值，超时节点不会参与任务分配。                                                           |
+| `MASTER_PROVISION_WORKER_IMAGE`            | `ghcr.io/gscr10/cloakbrowser-orchestration-manager-worker:latest`  | Worker 部署镜像。                                                                     |
+| `MASTER_PROVISION_REPO_URL`                | `https://github.com/gscr10/cloakbrowser-orchestration-manager.git` | `github_main_clean_rebuild` 模式下用于 clone 的仓库地址。                                   |
+| `MASTER_PROVISION_REPO_REF`                | `main`                                                             | `github_main_clean_rebuild` 模式下 checkout 的分支或 tag。                               |
+| `MASTER_PROVISION_WORKER_SOURCE_DIR`       | `/opt/cloakbrowser-orchestration-manager`                          | `github_main_clean_rebuild` 模式下的远端源码目录。                                          |
+| `MASTER_PROVISION_WORKER_CONFIG_DIR`       | `/opt/cloak-manager-worker/config`                                 | Worker 远端只读配置目录。                                                                 |
+| `MASTER_PROVISION_MASTER_BASE_URL`         | `http://host.docker.internal:8080`                                 | Worker 回连 Master 的地址模板值。默认值仅用于本地 Docker 特例；公网多机部署必须设为 `http://<master-ip>:8080`。 |
+| `MASTER_PROVISION_WORKER_API_BASE`         | `http://{host}:8080`                                               | Worker 注册给 Master 的 API 地址模板值，支持 `{host}` 等占位符。                                  |
+| `MASTER_PROVISION_BOOTSTRAP_CMD`           | sudo-aware Docker pull 模板                                          | 初始化前置命令。                                                                         |
+| `MASTER_PROVISION_START_CMD`               | sudo-aware Docker run 模板                                           | 启动 Worker 命令。                                                                    |
+
 
 模板支持占位符：`{node_id}`、`{host}`、`{username}`、`{max_profiles}`、`{master_base_url}`、`{worker_api_base}`、`{tags_csv}`、`{worker_image}`、`{repo_url}`、`{repo_ref}`、`{source_dir}`、`{config_dir}`。
 
@@ -651,7 +665,7 @@ python3 -m uvicorn worker_backend.main:app --host 0.0.0.0 --port 8080
 python3 -m uvicorn master_backend.main:app --host 0.0.0.0 --port 8080
 ```
 
-2. Worker 后端（执行面）
+1. Worker 后端（执行面）
 
 ```bash
 export DISTRIBUTED_WORKER_ENABLED=true
@@ -661,7 +675,7 @@ export WORKER_HOSTNAME=worker-local
 python3 -m uvicorn worker_backend.main:app --host 0.0.0.0 --port 8081
 ```
 
-3. Worker 前端（对应 Worker 后端）
+1. Worker 前端（对应 Worker 后端）
 
 ```bash
 cd worker-frontend
@@ -671,7 +685,7 @@ cp .env.example .env
 npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
-4. Master 前端（对应 Master 后端）
+1. Master 前端（对应 Master 后端）
 
 ```bash
 cd master-frontend
@@ -762,6 +776,7 @@ npm run build
 
 ## 仓库信息
 
-- 当前项目仓库：https://github.com/gscr10/cloakbrowser-orchestration-manager
-- 上游参考项目 `CloakBrowser`：https://github.com/CloakHQ/CloakBrowser
-- 上游参考项目 `CloakBrowser-Manager`：https://github.com/CloakHQ/CloakBrowser-Manager
+- 当前项目仓库：[https://github.com/gscr10/cloakbrowser-orchestration-manager](https://github.com/gscr10/cloakbrowser-orchestration-manager)
+- 上游参考项目 `CloakBrowser`：[https://github.com/CloakHQ/CloakBrowser](https://github.com/CloakHQ/CloakBrowser)
+- 上游参考项目 `CloakBrowser-Manager`：[https://github.com/CloakHQ/CloakBrowser-Manager](https://github.com/CloakHQ/CloakBrowser-Manager)
+
