@@ -43,9 +43,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME_PREFIX }}-${{ matrix.image_suffix }}
+          images: ${{ env.IMAGE_NAME_PREFIX }}-${{ github.ref_name }}-${{ matrix.image_suffix }}
           tags: |
-            type=ref,event=branch
+            type=raw,value=latest
 
       - name: Build and push image
         uses: docker/build-push-action@v6
